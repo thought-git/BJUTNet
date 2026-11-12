@@ -1,0 +1,11 @@
+[package]
+name = "cn-packager"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cn-pack"
+path = "src/main.rs"
+
+[dependencies]
+cn-common = { path = "../cn-common" }

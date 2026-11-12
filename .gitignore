@@ -1,0 +1,14 @@
+# 构建输出
+/target/
+/dist/
+/out/
+/release/
+/_probe-eframe/target/
+
+# 测试数据
+/_testdata*/
+
+# 调试产物
+*.pdb
+*.tmp
+*.log

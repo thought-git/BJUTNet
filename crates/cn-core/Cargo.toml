@@ -1,0 +1,39 @@
+[package]
+name = "cn-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+flate2 = "1"
+chrono = "0.4"
+# HTTP(S)：默认特性会拉 aws-lc-rs（离线缓存里没有），必须 default-features = false
+ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    # 网卡枚举：IpHelper 必须配 Ndis + WinSock 才能拿到 GetAdaptersAddresses
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    # DPAPI
+    "Win32_Security_Cryptography",
+    # SSID
+    "Win32_NetworkManagement_WiFi",
+    # IPC 命名管道 + 显式 DACL
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    # 安装器/卸载器：提权、快捷方式、HKLM 卸载项、等进程退出
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

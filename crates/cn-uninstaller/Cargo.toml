@@ -1,0 +1,16 @@
+[package]
+name = "cn-uninstaller"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "BJUTNetUninstall"
+path = "src/main.rs"
+
+[dependencies]
+cn-core = { path = "../cn-core" }
+cn-common = { path = "../cn-common" }
+serde_json = "1"
+
+[build-dependencies]
+embed-resource = "3"

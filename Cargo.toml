@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cn-core",
+    "crates/cn-svc",
+    "crates/cn-gui",
+    "crates/cn-installer",
+    "crates/cn-uninstaller",
+    "crates/cn-packager",
+    "crates/cn-common",
+]
+
+# M0 先用 thin lto 保证编译速度；正式发布再评估 lto = true
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+strip = true
