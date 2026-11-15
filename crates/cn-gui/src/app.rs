@@ -275,6 +275,18 @@ impl App {
                 };
                 row("状态", st.state.clone());
                 row("网络", st.net_kind.clone());
+                // 网络类型（协议）与接入介质（有线/无线）是两回事：
+                // 宿舍网、公共网都可能走有线或无线，这里单独显示介质。
+                let medium = if st.wireless || !st.ssid.is_empty() { "无线" } else { "有线" };
+                row(
+                    "接入",
+                    match (st.ssid.is_empty(), st.iface.is_empty()) {
+                        (false, false) => format!("{medium}（{}，SSID {}）", st.iface, st.ssid),
+                        (false, true) => format!("{medium}（SSID {}）", st.ssid),
+                        (true, false) => format!("{medium}（{}）", st.iface),
+                        (true, true) => medium.into(),
+                    },
+                );
                 row(
                     "判别依据",
                     if st.net_evidence.is_empty() {
@@ -386,11 +398,11 @@ impl App {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label("识别不准？把当前网络标记为校园网：");
-            if ui.button("宿舍有线").clicked() {
+            if ui.button("宿舍网").on_hover_text("有线 / 无线都适用：按门户协议区分，不看接入介质").clicked() {
                 self.bridge
                     .send("add_trusted_current", json!({"kind": "dorm"}), "trusted");
             }
-            if ui.button("公共无线").clicked() {
+            if ui.button("公共网").on_hover_text("有线 / 无线都适用：按门户协议区分，不看接入介质").clicked() {
                 self.bridge
                     .send("add_trusted_current", json!({"kind": "public"}), "trusted");
             }
@@ -494,7 +506,7 @@ impl App {
                 ui.end_row();
 
                 ui.label("自动连接校园 WiFi");
-                ui.checkbox(&mut self.auto_wifi, "允许（默认关，避免把宿舍有线踢掉）");
+                ui.checkbox(&mut self.auto_wifi, "允许（默认关，避免把宿舍网踢掉）");
                 ui.end_row();
 
                 ui.label("校园 WiFi 名称");
@@ -514,7 +526,7 @@ impl App {
         if trusted.is_empty() {
             ui.label(
                 egui::RichText::new(
-                    "（无）如果服务把当前网络认成「非校园网」，到「状态」页点「宿舍有线 / 公共无线」按钮即可加入。",
+                    "（无）如果服务把当前网络认成「非校园网」，到「状态」页点「宿舍网 / 公共网」按钮即可加入。",
                 )
                 .weak(),
             );

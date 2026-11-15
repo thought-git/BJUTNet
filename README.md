@@ -7,7 +7,7 @@
 
 ## 功能
 
-- **自动识别接入方式**：宿舍有线（Dr.COM eportal）与公共无线 `bjut_wifi`（`/drcom/login`）两套协议
+- **自动识别网络类型**：宿舍网络（Dr.COM eportal）与公共网络（`/drcom/login`）两套协议；两种网络都有有线/无线接入形态，网络类型按门户协议判定，接入方式在面板单独显示
 - **用户标记优先**：门户探测不准时，面板里一键"把当前网络标记为校园网"（SSID / 网关 / 网段任一匹配）
 - **掉线即重登**：在线每 5 秒探测（可调到 3 秒），实测掉线到重登约 3 秒
 - **开机即登录**：服务普通自启（非延迟），没有 IPv4 时每 2 秒重试，网络一就绪立刻登录
@@ -37,7 +37,7 @@ tests/           # 本地假 AC（mock_portal.py）+ 端到端脚本（m2/m3/m4/
 
 ```bash
 cargo build --release            # 产出 target/release/*.exe
-bash build/bundle.sh 1.1.3       # 组装 dist/ 并打成 release/BJUTNetSetup-1.1.3.exe
+bash build/bundle.sh 1.1.4       # 组装 dist/ 并打成 release/BJUTNetSetup-1.1.3.exe
 ```
 
 > `Cargo.lock` 已提交。若使用离线缓存，`cargo build --release --offline` 需要缓存里已有锁定版本。
@@ -49,7 +49,7 @@ cargo test --offline --workspace
 bash tests/m5_fixes_e2e.sh       # 在线判定/图标/网络标记/暂停/掉线重登/关闭服务
 bash tests/m2_e2e.sh             # 登录自愈/密码错暂停/账号后缀
 bash tests/m3_e2e.sh             # IPC 与面板联动
-bash tests/m4_e2e.sh 1.1.3       # 安装包自检
+bash tests/m4_e2e.sh 1.1.4       # 安装包自检
 ```
 
 ## 安装与使用
@@ -117,7 +117,7 @@ BJUTNetSvc.exe --install / --uninstall # 手工装/删服务（管理员）
 ## 已知限制
 
 - 只适配 BJUT 的两个门户（地址在 `config.json`，换了 AC 需要自行调整）；
-- 公共无线的注销端点不可靠，所以「关闭服务/暂停」在无线上只影响本程序；
+- 公共网络的注销端点不可靠，所以「关闭服务/暂停」在该网络下只影响本程序；
 - 掉线发现依赖 HTTP 探测（门户会话掉线不会触发系统事件），默认 5 秒，最低 3 秒；
 - 安装需要管理员权限（写 `Program Files`、注册服务）。
 

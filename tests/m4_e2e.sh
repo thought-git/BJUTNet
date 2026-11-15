@@ -15,7 +15,7 @@ set -u
 export CAMPUSNET_PIPE="cn-test-m4"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT_W="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")"
-VER="${1:-1.1.3}"
+VER="${1:-1.1.4}"
 SETUP="$ROOT/release/BJUTNetSetup-$VER.exe"
 DIST="$ROOT/dist"
 TMP="$ROOT/_testdata-m4"

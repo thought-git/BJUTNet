@@ -139,7 +139,7 @@ pub fn login_once() -> i32 {
             }
         }
         NetworkKind::Public => {
-            println!("公共无线：账号按纯学号提交（自动去掉 @ 后缀）");
+            println!("公共网络：账号按纯学号提交（自动去掉 @ 后缀）");
         }
     }
 
@@ -182,7 +182,7 @@ pub fn logout() -> i32 {
     let (kind, _) = portal::detect(&cfg, ssid.as_deref(), ipv4.as_deref(), &gw, cfg.probe_timeout());
     if kind != NetworkKind::Dorm {
         eprintln!(
-            "✗ 当前判别为 {}，公共无线没有可靠的退出端点，请到门户页面手动注销",
+            "✗ 当前判别为 {}，公共网络没有可靠的退出端点，请到门户页面手动注销",
             kind.text()
         );
         return 3;

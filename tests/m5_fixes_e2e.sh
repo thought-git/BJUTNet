@@ -74,7 +74,7 @@ sleep 8
 check '日志出现「开始登录」' "yes" "$(contains /tmp/m5-svc1.log "开始登录")"
 check '日志出现「登录成功」' "yes" "$(contains /tmp/m5-svc1.log "登录成功[")"
 check "登录后判定在线" "True" "$(st online)"
-check "在线时网络类型=宿舍有线" "宿舍有线" "$(st net_kind)"
+check "在线时网络类型=宿舍网络" "宿舍网络" "$(st net_kind)"
 check "在线时也有判别依据" "yes" "$(contains /tmp/m5-svc1.log "网络判别")"
 kill "$SVC_PID" 2>/dev/null || taskkill //F //PID "$SVC_PID" >/dev/null 2>&1
 SVC_PID=""
@@ -91,7 +91,7 @@ echo "== 3. 用户标记的校园网优先于门户探测 =="
 write_cfg "$TMP/trusted" '["http://127.0.0.1:18080/204"]' "http://127.0.0.1:9" "http://127.0.0.1:9" \
   '[{"kind":"dorm","name":"我的宿舍网","ssid":"","gateway":"","subnet":"10.126.64.0/19"}]'
 "$EXE" --probe --data "$(cygpath -m "$TMP/trusted")" >/tmp/m5-probe2.txt 2>&1
-check "两个门户都不可达仍判宿舍有线" "yes" "$(contains /tmp/m5-probe2.txt "结果     : 宿舍有线")"
+check "两个门户都不可达仍判宿舍网络" "yes" "$(contains /tmp/m5-probe2.txt "结果     : 宿舍网络")"
 check "依据写明用户标记" "yes" "$(contains /tmp/m5-probe2.txt "用户标记")"
 
 echo "== 4. 面板可把当前网络加为校园网（走 IPC） =="

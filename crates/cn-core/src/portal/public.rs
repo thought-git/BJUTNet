@@ -1,4 +1,4 @@
-//! 公共无线 `bjut_wifi` 的门户协议（老版 drcom CGI，`login_method=0`）。
+//! 公共网络的门户协议（老版 drcom CGI，`login_method=0`；bjut_wifi 或公共有线都可能走这套）。
 //!
 //! 实测成功的请求（浏览器抓包）：
 //!
@@ -56,7 +56,7 @@ fn drcom_query(account: &str, password: &str, ip: &str, mac_plain: &str) -> Stri
     )
 }
 
-/// 登录公共无线门户
+/// 登录公共网络门户
 pub fn login(
     cfg: &Config,
     creds: &Credentials,

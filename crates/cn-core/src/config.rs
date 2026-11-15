@@ -36,7 +36,7 @@ impl Default for DormCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PublicCfg {
-    /// 公共无线门户根地址（HTTPS，标准端口）
+    /// 公共网络门户根地址（HTTPS，标准端口）
     pub base: String,
     /// Referer 路径（实测浏览器登录带 /a79.htm）
     pub referer_path: String,
@@ -62,7 +62,7 @@ impl Default for PublicCfg {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TrustedNet {
-    /// "dorm"（宿舍有线）/ "public"（公共无线）
+    /// "dorm"（宿舍网络协议）/ "public"（公共网络协议）；与有线/无线接入介质无关
     pub kind: String,
     /// 备注（面板里展示用，默认自动生成）
     pub name: String,
@@ -105,7 +105,7 @@ impl TrustedNet {
         if !self.name.is_empty() {
             return self.name.clone();
         }
-        let kind = if self.is_public() { "公共无线" } else { "宿舍有线" };
+        let kind = if self.is_public() { "公共网络" } else { "宿舍网络" };
         let mut parts = vec![kind.to_string()];
         if !self.ssid.is_empty() {
             parts.push(format!("SSID={}", self.ssid));
@@ -145,7 +145,7 @@ pub struct Config {
     /// 暂停多少分钟
     pub pause_minutes: u64,
 
-    /// 是否允许服务自动去连 bjut_wifi（默认关：避免把宿舍有线踢掉）
+    /// 是否允许服务自动去连 bjut_wifi（默认关：避免把宿舍网络踢掉）
     pub auto_connect_wifi: bool,
     pub wifi_profile: String,
 

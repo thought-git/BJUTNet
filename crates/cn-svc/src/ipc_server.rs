@@ -283,7 +283,7 @@ fn add_trusted_current(req: &Request, ctx: &Ctx) -> Response {
     };
     entry.name = format!(
         "{}（{}）",
-        if entry.is_public() { "公共无线" } else { "宿舍有线" },
+        if entry.is_public() { "公共网络" } else { "宿舍网络" },
         if !entry.ssid.is_empty() {
             format!("SSID={}", entry.ssid)
         } else if !entry.gateway.is_empty() {

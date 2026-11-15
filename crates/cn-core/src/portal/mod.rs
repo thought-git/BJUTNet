@@ -2,7 +2,7 @@
 //!
 //! 两套协议的区别（都是实测参数，见方案 §9 / 附录 B）：
 //!
-//! | | 宿舍有线 | 公共无线 `bjut_wifi` |
+//! | | 宿舍网络（dorm 门户） | 公共网络（public 门户） |
 //! |---|---|---|
 //! | 端点 | `http://10.21.221.98:801/eportal/portal/login` | `https://wlgn.bjut.edu.cn/drcom/login` |
 //! | 账号 | `学号@campus` | 纯学号 |
@@ -21,6 +21,10 @@ use crate::http;
 
 /// 网络类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 校园网的**协议**类型。
+///
+/// 注意：dorm/public 是"走哪套门户协议"，**不是**接入介质——
+/// 宿舍和公共网都有有线、无线两种接入形态，介质请看 `Status.iface/wireless`。
 pub enum NetworkKind {
     None,
     Dorm,
@@ -31,8 +35,8 @@ impl NetworkKind {
     pub fn text(self) -> &'static str {
         match self {
             NetworkKind::None => "非校园网",
-            NetworkKind::Dorm => "宿舍有线",
-            NetworkKind::Public => "公共无线",
+            NetworkKind::Dorm => "宿舍网络",
+            NetworkKind::Public => "公共网络",
         }
     }
 

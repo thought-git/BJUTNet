@@ -94,7 +94,7 @@ OUT=$(rpc '{"cmd":"set_credentials","params":{"account":"20250000","password":"s
 check "set_credentials ok" "True" "$(echo "$OUT" | python -c "import json,sys;print(json.load(sys.stdin)['ok'])")"
 sleep 1
 check "写完后 configured=true" "True" "$(st_field configured)"
-check "账号按打码返回" "250****23" "$(st_field account)"
+check "账号按打码返回" "202****00" "$(st_field account)"
 [ -f "$DATA/secrets.dat" ] && check "secrets.dat 已由服务写出" "1" "1" || check "secrets.dat 已由服务写出" "1" "0"
 
 echo "== 场景 3：服务自动登录（面板全程未运行） =="

@@ -101,6 +101,8 @@ struct EnvSnap {
     mac: String,
     gateway: String,
     ssid: String,
+    iface: String,
+    wireless: bool,
     prefix_len: u8,
     kind: NetworkKind,
 }
@@ -112,6 +114,8 @@ impl Default for EnvSnap {
             mac: String::new(),
             gateway: String::new(),
             ssid: String::new(),
+            iface: String::new(),
+            wireless: false,
             prefix_len: 0,
             kind: NetworkKind::None,
         }
@@ -316,6 +320,11 @@ impl Runtime {
         self.env.mac = active.as_ref().map(|a| a.mac.clone()).unwrap_or_default();
         self.env.gateway = active.as_ref().map(|a| a.gateway.clone()).unwrap_or_default();
         self.env.ssid = ssid.clone().unwrap_or_default();
+        self.env.iface = active
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        self.env.wireless = active.as_ref().map(|a| a.is_wireless).unwrap_or(false);
         self.env.prefix_len = active.as_ref().map(|a| a.prefix_len).unwrap_or(0);
 
         // ---- 1.5 开机/断网初期：还没有 IPv4 时快速重试，别走"非校园网待机 60s" ----
@@ -603,7 +612,7 @@ impl Runtime {
                                     }
                                 }
                                 NetworkKind::Public => {
-                                    logging::warn("公共无线没有注销接口，本次只做重连探测")
+                                    logging::warn("公共网络没有注销接口，本次只做重连探测")
                                 }
                                 NetworkKind::None => {}
                             }
@@ -665,6 +674,8 @@ impl Runtime {
             prefix_len: self.env.prefix_len,
             trusted: self.cfg.trusted_networks.clone(),
             ssid: self.env.ssid.clone(),
+            iface: self.env.iface.clone(),
+            wireless: self.env.wireless,
             ip: self.env.ip.clone(),
             mac: self.env.mac.clone(),
             gateway: self.env.gateway.clone(),

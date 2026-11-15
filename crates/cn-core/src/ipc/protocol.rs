@@ -13,7 +13,7 @@ pub struct Status {
     pub proto: u32,
     /// 状态文案（未配置 / 待机 / 检测中 / 登录中 / 在线 / 退避等待 / 已暂停）
     pub state: String,
-    /// 网络类型（非校园网 / 宿舍有线 / 公共无线）
+    /// 网络协议类型（非校园网 / 宿舍网络 / 公共网络）；与有线/无线无关
     pub net_kind: String,
     /// 网络判别的依据（"宿舍门户=可达…" / "用户手动标记…"）
     pub net_evidence: String,
@@ -22,6 +22,10 @@ pub struct Status {
     /// 用户标记为校园网的网络列表
     pub trusted: Vec<crate::config::TrustedNet>,
     pub ssid: String,
+    /// 当前出口网卡名（如“以太网 3”“WLAN”）
+    pub iface: String,
+    /// 当前出口网卡是否无线（有线/无线是接入介质，与协议无关）
+    pub wireless: bool,
     pub ip: String,
     pub mac: String,
     pub gateway: String,
