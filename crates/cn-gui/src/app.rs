@@ -15,8 +15,45 @@ use crate::bridge::{Bridge, UiEvent};
 enum Tab {
     Status,
     Settings,
+    Billing,
     Logs,
     About,
+}
+
+/// 计费页展示用的视图数据（从 IPC JSON 解析）
+#[derive(Clone)]
+struct BillingView {
+    balance_yuan: f64,
+    used_mb: f64,
+    left_mb: f64,
+    used_time_min: u64,
+    package_price_yuan: Option<f64>,
+    fetched_epoch: i64,
+}
+
+impl BillingView {
+    fn from_json(v: &serde_json::Value) -> Option<Self> {
+        Some(Self {
+            balance_yuan: v.get("balance_yuan")?.as_f64()?,
+            used_mb: v.get("used_mb")?.as_f64()?,
+            left_mb: v.get("left_mb")?.as_f64()?,
+            used_time_min: v.get("used_time_min").and_then(|x| x.as_u64()).unwrap_or(0),
+            package_price_yuan: v.get("package_price_yuan").and_then(|x| x.as_f64()),
+            fetched_epoch: v.get("fetched_epoch").and_then(|x| x.as_i64()).unwrap_or(0),
+        })
+    }
+    fn total_mb(&self) -> f64 {
+        (self.used_mb + self.left_mb).max(0.0)
+    }
+    fn arrears(&self) -> bool {
+        self.balance_yuan <= 0.005
+    }
+
+    fn below_package(&self) -> bool {
+        self.package_price_yuan
+            .map(|p| self.balance_yuan < p)
+            .unwrap_or(false)
+    }
 }
 
 pub struct App {
@@ -42,6 +79,21 @@ pub struct App {
     log_lines: Vec<String>,
     auto_log: bool,
     last_log_at: Instant,
+
+    // 计费页
+    billing_loaded: bool,
+    billing_loading: bool,
+    billing_need_captcha: bool,
+    billing_captcha: Option<egui::TextureHandle>,
+    billing_captcha_img: Option<egui::ColorImage>,
+    billing_code: String,
+    billing_error: String,
+    billing_data: Option<BillingView>,
+    billing_hide: bool,
+    billing_auto: bool,
+    billing_popup_offline: bool,
+    billing_flow_alert_mb: u64,
+    billing_confirm_auto: bool,
 
     // 关于页
     diag_text: Option<String>,
@@ -76,6 +128,19 @@ impl App {
             log_lines: Vec::new(),
             auto_log: true,
             last_log_at: Instant::now() - Duration::from_secs(5),
+            billing_loaded: false,
+            billing_loading: false,
+            billing_need_captcha: false,
+            billing_captcha: None,
+            billing_captcha_img: None,
+            billing_code: String::new(),
+            billing_error: String::new(),
+            billing_data: None,
+            billing_hide: false,
+            billing_auto: false,
+            billing_popup_offline: false,
+            billing_flow_alert_mb: 0,
+            billing_confirm_auto: false,
             diag_text: None,
             toast: None,
             confirm_stop: false,
@@ -117,6 +182,10 @@ impl App {
                 }
                 UiEvent::Action(Ok(resp), label) => {
                     if !resp.ok {
+                        if label.starts_with("billing") {
+                            self.billing_loading = false;
+                            self.billing_error = resp.error.clone();
+                        }
                         self.toast(format!("{label} 失败: {}", resp.error), true);
                     } else {
                         match label {
@@ -171,6 +240,63 @@ impl App {
                                     );
                                 } else {
                                     self.toast("已保存，服务正在用新密码登录，稍等看状态页", false);
+                                }
+                            }
+                            "billing_status" | "billing_refresh" => {
+                                self.billing_loading = false;
+                                if let Some(v) = resp.data.get("hide_amount").and_then(|v| v.as_bool()) {
+                                    self.billing_hide = v;
+                                }
+                                if let Some(v) = resp.data.get("auto_check").and_then(|v| v.as_bool()) {
+                                    self.billing_auto = v;
+                                }
+                                if let Some(v) = resp.data.get("popup_only_offline").and_then(|v| v.as_bool()) {
+                                    self.billing_popup_offline = v;
+                                }
+                                if let Some(v) = resp.data.get("flow_alert_mb").and_then(|v| v.as_u64()) {
+                                    self.billing_flow_alert_mb = v;
+                                }
+                                let need = resp
+                                    .data
+                                    .get("need_captcha")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                self.billing_need_captcha = need;
+                                if need {
+                                    self.billing_captcha = None;
+                                    self.billing_captcha_img = None;
+                                    if let Some(b64) =
+                                        resp.data.get("captcha_png").and_then(|v| v.as_str())
+                                    {
+                                        use base64::Engine;
+                                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD
+                                            .decode(b64)
+                                        {
+                                            if let Ok(img) = image::load_from_memory(&bytes) {
+                                                let rgba = img.to_rgba8();
+                                                let (w, h) = rgba.dimensions();
+                                                self.billing_captcha_img =
+                                                    Some(egui::ColorImage::from_rgba_unmultiplied(
+                                                        [w as usize, h as usize],
+                                                        rgba.as_raw(),
+                                                    ));
+                                            }
+                                        }
+                                    }
+                                    self.billing_code.clear();
+                                    self.toast("需要验证码：按图片输入后提交", false);
+                                } else {
+                                    self.billing_captcha = None;
+                                    self.billing_captcha_img = None;
+                                    if let Some(v) = resp.data.get("data") {
+                                        if !v.is_null() {
+                                            self.billing_data = BillingView::from_json(v);
+                                            self.billing_error.clear();
+                                        }
+                                    }
+                                    if resp.data.get("data").is_some() {
+                                        self.toast("计费信息已更新", false);
+                                    }
                                 }
                             }
                             "reconnect" => self.toast("已触发立即重连", false),
@@ -248,6 +374,7 @@ impl App {
             for (tab, name) in [
                 (Tab::Status, "状态"),
                 (Tab::Settings, "设置"),
+                (Tab::Billing, "计费"),
                 (Tab::Logs, "日志"),
                 (Tab::About, "关于"),
             ] {
@@ -563,6 +690,242 @@ impl App {
         });
     }
 
+
+    fn billing_tab(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ui.heading("计费（只读）");
+        ui.horizontal(|ui| {
+            if ui.button("刷新").clicked() {
+                self.billing_loading = true;
+                self.billing_error.clear();
+                self.bridge.send("billing_refresh", json!({}), "billing_refresh");
+            }
+            if ui.button("在浏览器打开").clicked() {
+                if let Err(e) = cn_core::shell::open_url(
+                    "https://jfself.bjut.edu.cn/Self/dashboard",
+                ) {
+                    self.toast(e, true);
+                }
+            }
+            if self.billing_loading {
+                ui.spinner();
+                ui.label("查询中…");
+            }
+        });
+        ui.label(
+            egui::RichText::new(
+                "只读：只查余额和流量，不缴费、不改套餐。登录使用已保存的校园网账号密码。",
+            )
+            .weak()
+            .small(),
+        );
+        ui.separator();
+
+        if self.billing_need_captcha {
+            ui.label("该站点要求验证码（连续登录失败会触发）。请输入图片中的字符：");
+            if let Some(img) = self.billing_captcha_img.take() {
+                self.billing_captcha = Some(ctx.load_texture(
+                    "billing_captcha",
+                    img,
+                    egui::TextureOptions::NEAREST,
+                ));
+            }
+            if let Some(tex) = &self.billing_captcha {
+                ui.add(egui::Image::new((tex.id(), egui::vec2(120.0, 40.0))));
+            }
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.billing_code)
+                        .desired_width(90.0)
+                        .hint_text("验证码"),
+                );
+                if ui.button("提交").clicked() {
+                    let code = self.billing_code.trim().to_string();
+                    self.billing_loading = true;
+                    self.bridge.send(
+                        "billing_refresh",
+                        json!({ "code": code }),
+                        "billing_refresh",
+                    );
+                }
+            });
+            ui.label(
+                egui::RichText::new("也可以点「在浏览器打开」登录一次，再回来点刷新。")
+                    .weak()
+                    .small(),
+            );
+        } else if !self.billing_error.is_empty() {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 60, 60),
+                self.billing_error.clone(),
+            );
+            ui.label(
+                egui::RichText::new("如果提示页面解析失败，可能是站点改版；请先点「在浏览器打开」确认页面正常。")
+                    .weak()
+                    .small(),
+            );
+        } else if let Some(d) = self.billing_data.clone() {
+            egui::Grid::new("billing_grid")
+                .num_columns(2)
+                .spacing([24.0, 6.0])
+                .show(ui, |ui| {
+                    let money = |v: f64, hide: bool| {
+                        if hide {
+                            "•••".to_string()
+                        } else {
+                            format!("¥ {v:.2}")
+                        }
+                    };
+                    ui.label("余额");
+                    ui.label(money(d.balance_yuan, self.billing_hide));
+                    ui.end_row();
+
+                    ui.label("余额状态");
+                    if d.arrears() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(200, 60, 60),
+                            "余额为 0（可能已停机）".to_string(),
+                        );
+                    } else if d.below_package() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(200, 140, 0),
+                            "余额不足以支付套餐".to_string(),
+                        );
+                    } else {
+                        ui.colored_label(egui::Color32::from_rgb(46, 160, 67), "正常");
+                    }
+                    ui.end_row();
+
+                    if let Some(price) = d.package_price_yuan {
+                        ui.label("当前套餐价");
+                        ui.label(format!("¥ {price:.2}"));
+                        ui.end_row();
+                    }
+                    ui.label("本月已用流量");
+                    ui.label(format!("{:.2} GB", d.used_mb / 1024.0));
+                    ui.end_row();
+                    ui.label("剩余流量");
+                    ui.label(format!("{:.2} GB", d.left_mb / 1024.0));
+                    ui.end_row();
+                    ui.label("总配额");
+                    ui.label(format!("{:.2} GB", d.total_mb() / 1024.0));
+                    ui.end_row();
+                    if d.used_time_min > 0 {
+                        ui.label("已用时长");
+                        ui.label(format!(
+                            "{} 小时 {} 分",
+                            d.used_time_min / 60,
+                            d.used_time_min % 60
+                        ));
+                        ui.end_row();
+                    }
+                    ui.label("查询时间");
+                    ui.label(
+                        chrono::DateTime::from_timestamp(d.fetched_epoch, 0)
+                            .map(|t| {
+                                t.with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d %H:%M:%S")
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| "-".into()),
+                    );
+                    ui.end_row();
+                });
+        } else {
+            ui.label("还没有查询结果，点「刷新」查询。");
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        let mut hide = self.billing_hide;
+        if ui.checkbox(&mut hide, "隐藏金额（余额/欠费）").changed() {
+            self.billing_hide = hide;
+            self.bridge.send(
+                "set_options",
+                json!({ "billingHideAmount": hide }),
+                "options",
+            );
+        }
+        ui.horizontal(|ui| {
+            ui.label("当月剩余流量低于");
+            let resp = ui.add(
+                egui::DragValue::new(&mut self.billing_flow_alert_mb)
+                    .range(0..=10_000_000)
+                    .speed(64)
+                    .suffix(" MB"),
+            );
+            ui.label("时提醒（0 = 关闭；1024 MB = 1 GB）");
+            if resp.changed() && !resp.dragged() {
+                self.bridge.send(
+                    "set_options",
+                    json!({ "billingFlowAlertMb": self.billing_flow_alert_mb }),
+                    "options",
+                );
+            }
+        });
+        let mut auto = self.billing_auto;
+        if ui
+            .checkbox(&mut auto, "开机自动查询余额（余额为 0 时弹窗）")
+            .changed()
+        {
+            if auto {
+                self.billing_confirm_auto = true;
+            } else {
+                self.billing_auto = false;
+                self.bridge.send(
+                    "set_options",
+                    json!({ "billingAutoCheck": false }),
+                    "options",
+                );
+            }
+        }
+        let mut offline = self.billing_popup_offline;
+        if ui
+            .add_enabled(
+                self.billing_auto,
+                egui::Checkbox::new(
+                    &mut offline,
+                    "可选：仅在无法出网时弹窗（对流量/余额两种提醒都生效）",
+                ),
+            )
+            .changed()
+        {
+            self.billing_popup_offline = offline;
+            self.bridge.send(
+                "set_options",
+                json!({ "billingPopupOnlyOffline": offline }),
+                "options",
+            );
+        }
+        if self.billing_confirm_auto {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 140, 0),
+                "开启后，服务会在开机联网后用已保存的校园网密码登录计费系统查询一次（只读）；余额为 0 时弹窗提醒。",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("确认开启").clicked() {
+                    self.billing_confirm_auto = false;
+                    self.billing_auto = true;
+                    self.bridge.send(
+                        "set_options",
+                        json!({ "billingAutoCheck": true }),
+                        "options",
+                    );
+                }
+                if ui.button("取消").clicked() {
+                    self.billing_confirm_auto = false;
+                }
+            });
+        }
+        ui.label(
+            egui::RichText::new(
+                "提示：连续登录失败后站点会要求验证码；服务自动查询遇到验证码会跳过，面板里可手动输入。",
+            )
+            .weak()
+            .small(),
+        );
+    }
+
     fn logs_tab(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui.button("刷新").clicked() {
@@ -658,6 +1021,13 @@ impl eframe::App for App {
             self.bridge.send("get_logs", json!({"tail": 500}), "logs");
         }
 
+        // 首次进入计费页：拉一次缓存 + 开关状态
+        if self.tab == Tab::Billing && !self.billing_loaded {
+            self.billing_loaded = true;
+            self.billing_loading = true;
+            self.bridge.send("billing_status", json!({}), "billing_status");
+        }
+
         egui::Panel::top("top").show(ui, |ui| {
             ui.add_space(6.0);
             self.top_bar(ui);
@@ -682,6 +1052,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| match self.tab {
             Tab::Status => self.status_tab(ui),
             Tab::Settings => self.settings_tab(ui),
+            Tab::Billing => self.billing_tab(ui),
             Tab::Logs => self.logs_tab(ui),
             Tab::About => self.about_tab(ui),
         });

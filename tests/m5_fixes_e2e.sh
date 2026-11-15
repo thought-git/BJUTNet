@@ -105,7 +105,14 @@ sleep 1  # 等 worker 重载配置后把 trusted 发到状态快照
 check "返回 added=true" "True" "$(echo "$OUT" | python -c "import json,sys;print(json.load(sys.stdin)['data'].get('added'))")"
 check "status 里能看到 1 条标记" "1" "$(rpc '{"cmd":"status"}' | python -c "import json,sys;print(len(json.load(sys.stdin)['data'].get('trusted',[])))")"
 check "config.json 写入了 trustedNetworks" "yes" "$(contains "$TMP/add/config.json" "trustedNetworks")"
-check "网段按 ip/prefix 算出来了" "yes" "$(contains "$TMP/add/config.json" "10.126.64.0/19")"
+# 网段要与当前 IP/prefix 一致（不写死网段，换网络也能跑）
+EXPECT_SUBNET=$(rpc '{"cmd":"status"}' | python -c "
+import json,sys,ipaddress
+d=json.load(sys.stdin)['data']
+ip=d.get('ip') or ''; pl=d.get('prefix_len') or 0
+print(str(ipaddress.ip_network(f'{ip}/{pl}', strict=False)) if ip and pl else '')
+")
+check "网段按 ip/prefix 算出来了" "yes" "$(contains "$TMP/add/config.json" "$EXPECT_SUBNET")"
 # 新增：重连并验证（先注销再登录）
 check "verify_login 返回 ok" "True" "$(rpc '{"cmd":"verify_login"}' | python -c "import json,sys;print(json.load(sys.stdin)['ok'])")"
 sleep 4

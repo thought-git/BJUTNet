@@ -91,3 +91,40 @@ pub fn wait_process_exit(pid: u32, timeout_ms: u64) -> bool {
         }
     }
 }
+
+/// 用系统默认浏览器打开一个 URL（面板「在浏览器打开」用）
+pub fn open_url(url: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut core::ffi::c_void,
+            op: *const u16,
+            file: *const u16,
+            params: *const u16,
+            dir: *const u16,
+            show: i32,
+        ) -> isize;
+    }
+    let wide = |s: &str| -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    };
+    let op = wide("open");
+    let file = wide(url);
+    let ret = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            op.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if ret as usize > 32 {
+        Ok(())
+    } else {
+        Err(format!("打开浏览器失败（ShellExecute 返回 {ret}）"))
+    }
+}

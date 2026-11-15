@@ -34,6 +34,10 @@ pub struct Deps {
     pub started: Instant,
     /// 停止信号（SCM 停止 / 面板「关闭服务」）
     pub stop: Arc<AtomicBool>,
+    /// 与 IPC / 计费线程共享的当前配置
+    pub shared_cfg: Arc<Mutex<Config>>,
+    /// 与 IPC / 计费线程共享的当前凭据
+    pub shared_creds: Arc<Mutex<Option<Credentials>>>,
 }
 
 pub fn run_foreground(deps: Deps) {
@@ -143,6 +147,8 @@ struct Runtime {
     cmd_rx: Receiver<Command>,
     started: Instant,
     stop: Arc<AtomicBool>,
+    shared_cfg: Arc<Mutex<Config>>,
+    shared_creds: Arc<Mutex<Option<Credentials>>>,
 }
 
 impl Runtime {
@@ -174,6 +180,14 @@ impl Runtime {
             machine.set_unconfigured();
         }
 
+        // 先把共享快照填好：计费线程/面板可能比第一轮 tick 更早来问
+        if let Ok(mut g) = deps.shared_cfg.lock() {
+            *g = cfg.clone();
+        }
+        if let Ok(mut g) = deps.shared_creds.lock() {
+            *g = creds.clone();
+        }
+
         Ok(Self {
             cfg,
             cfg_outcome: outcome,
@@ -193,6 +207,8 @@ impl Runtime {
             cmd_rx: deps.cmd_rx,
             started: deps.started,
             stop: deps.stop,
+            shared_cfg: deps.shared_cfg,
+            shared_creds: deps.shared_creds,
         })
     }
 
@@ -732,6 +748,9 @@ impl Runtime {
                 self.machine.backoff_idx = 0;
             }
             self.cfg = cfg;
+            if let Ok(mut g) = self.shared_cfg.lock() {
+                *g = self.cfg.clone();
+            }
         }
     }
 
@@ -746,6 +765,9 @@ impl Runtime {
             Ok(Some(c)) => {
                 logging::info(format!("凭据已更新（账号 {}）", c.masked_account()));
                 self.creds = Some(c);
+                if let Ok(mut g) = self.shared_creds.lock() {
+                    *g = self.creds.clone();
+                }
                 if !self.machine.paused_forever {
                     self.machine.force_now();
                 }
@@ -755,11 +777,17 @@ impl Runtime {
                     logging::warn("凭据文件已被删除，回到未配置状态");
                 }
                 self.creds = None;
+                if let Ok(mut g) = self.shared_creds.lock() {
+                    *g = None;
+                }
                 self.machine.set_unconfigured();
             }
             Err(e) => {
                 logging::warn(format!("凭据读取失败（{e}），按未配置处理"));
                 self.creds = None;
+                if let Ok(mut g) = self.shared_creds.lock() {
+                    *g = None;
+                }
                 self.machine.set_unconfigured();
             }
         }

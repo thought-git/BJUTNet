@@ -11,6 +11,7 @@ path = "src/main.rs"
 cn-core = { path = "../cn-core" }
 anyhow = "1"
 serde_json = "1"
+base64 = "0.22"
 chrono = "0.4"
 
 [build-dependencies]

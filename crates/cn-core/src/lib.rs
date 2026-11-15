@@ -11,6 +11,7 @@
 //! - `wlan`    WLAN SSID
 //! - `http`    HTTP 探活（generate_204）
 
+pub mod billing;
 pub mod config;
 pub mod app;
 pub mod http;

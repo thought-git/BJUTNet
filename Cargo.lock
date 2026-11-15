@@ -310,11 +310,13 @@ dependencies = [
 name = "cn-gui"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "cn-core",
  "eframe",
  "embed-resource",
  "ico",
+ "image",
  "serde_json",
 ]
 
@@ -343,6 +345,7 @@ name = "cn-svc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "cn-core",
  "embed-resource",

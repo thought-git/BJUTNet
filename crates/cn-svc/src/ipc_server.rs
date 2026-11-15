@@ -37,6 +37,13 @@ pub struct Ctx {
     pub status: Arc<Mutex<Status>>,
     pub cmd_tx: Sender<Command>,
     pub started: Instant,
+    /// 当前配置/凭据（与 worker 共享）
+    pub shared_cfg: Arc<Mutex<Config>>,
+    pub shared_creds: Arc<Mutex<Option<secret::Credentials>>>,
+    /// 最近一次计费查询结果
+    pub billing: Arc<Mutex<Option<cn_core::billing::BillingData>>>,
+    /// 等待验证码的计费会话
+    pub billing_pending: crate::billing::Pending,
 }
 
 pub fn spawn(ctx: Arc<Ctx>) {
@@ -132,6 +139,8 @@ fn dispatch(req: &Request, ctx: &Ctx) -> Response {
                 Response::ok(serde_json::json!({"msg": format!("已暂停 {minutes} 分钟")}))
             }
         }
+        "billing_status" => billing_status(ctx),
+        "billing_refresh" => billing_refresh(req, ctx),
         "stop_service" => {
             let _ = ctx.cmd_tx.send(Command::StopService);
             Response::ok(serde_json::json!({"msg": "服务正在关闭（本次运行）"}))
@@ -236,6 +245,25 @@ fn set_options(req: &Request, ctx: &Ctx) -> Response {
             changed.push("logLevel");
         }
     }
+    if let Some(v) = req.bool("billingAutoCheck") {
+        cfg.billing_auto_check = v;
+        changed.push("billingAutoCheck");
+    }
+    if let Some(v) = req.bool("billingHideAmount") {
+        cfg.billing_hide_amount = v;
+        changed.push("billingHideAmount");
+    }
+    if let Some(v) = req
+        .bool("billingPopupOnlyOffline")
+        .or_else(|| req.bool("billingPopupOffline"))
+    {
+        cfg.billing_popup_only_offline = v;
+        changed.push("billingPopupOnlyOffline");
+    }
+    if let Some(v) = req.u64("billingFlowAlertMb") {
+        cfg.billing_flow_alert_mb = v.min(10_000_000);
+        changed.push("billingFlowAlertMb");
+    }
     if let Some(v) = req.str("accountSuffixFallback") {
         cfg.account_suffix_fallback = v.trim().to_string();
         changed.push("accountSuffixFallback");
@@ -333,4 +361,48 @@ fn remove_trusted(req: &Request) -> Response {
     // 注意：这里没有 ctx，但保存后 worker 的 mtime 轮询会自动重载；为了让 UI 立刻刷新，
     // 调用方（面板）可以紧接着点「立即重连」或等下一轮 200ms 热重载。
     Response::ok(serde_json::json!({ "removed": removed }))
+}
+
+fn billing_status(ctx: &Ctx) -> Response {
+    let cfg = ctx.shared_cfg.lock().map(|g| g.clone()).unwrap_or_default();
+    let configured = ctx
+        .shared_creds
+        .lock()
+        .map(|g| g.is_some())
+        .unwrap_or(false);
+    let data = ctx.billing.lock().ok().and_then(|g| g.clone());
+    Response::ok(serde_json::json!({
+        "configured": configured,
+        "auto_check": cfg.billing_auto_check,
+        "hide_amount": cfg.billing_hide_amount,
+        "popup_only_offline": cfg.billing_popup_only_offline,
+        "flow_alert_mb": cfg.billing_flow_alert_mb,
+        "data": data,
+    }))
+}
+
+fn billing_refresh(req: &Request, ctx: &Ctx) -> Response {
+    let cfg = ctx.shared_cfg.lock().map(|g| g.clone()).unwrap_or_default();
+    let creds = ctx.shared_creds.lock().ok().and_then(|g| g.clone());
+    let code = req.str("code").filter(|s| !s.trim().is_empty());
+    match crate::billing::refresh(&ctx.billing_pending, &cfg, creds.as_ref(), code) {
+        Ok(d) => {
+            if let Ok(mut g) = ctx.billing.lock() {
+                *g = Some(d.clone());
+            }
+            Response::ok(serde_json::json!({
+                "need_captcha": false,
+                "data": d,
+            }))
+        }
+        Err(cn_core::billing::BillingError::NeedCaptcha { image }) => {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&image);
+            Response::ok(serde_json::json!({
+                "need_captcha": true,
+                "captcha_png": b64,
+            }))
+        }
+        Err(e) => Response::err(e.text()),
+    }
 }

@@ -151,6 +151,18 @@ pub struct Config {
 
     /// ERR / WARN / INFO / DEBUG
     pub log_level: String,
+    /// 是否允许服务开机时用已保存的密码自动查一次计费余额（用户需在面板确认）
+    #[serde(default)]
+    pub billing_auto_check: bool,
+    /// 面板是否隐藏金额（余额/欠费金额）
+    #[serde(default)]
+    pub billing_hide_amount: bool,
+    /// 可选子条件：余额不足提醒**仅在无法出网时**弹窗
+    #[serde(default, alias = "billingPopupOffline")]
+    pub billing_popup_only_offline: bool,
+    /// 当月剩余流量低于该值（MB）时弹窗；0 = 关闭（1024MB = 1GB）
+    #[serde(default)]
+    pub billing_flow_alert_mb: u64,
 
     pub dorm: DormCfg,
     pub public: PublicCfg,
@@ -175,6 +187,10 @@ impl Default for Config {
             auto_connect_wifi: false,
             wifi_profile: "bjut_wifi".into(),
             log_level: "INFO".into(),
+            billing_auto_check: false,
+            billing_hide_amount: false,
+            billing_popup_only_offline: false,
+            billing_flow_alert_mb: 0,
             dorm: DormCfg::default(),
             public: PublicCfg::default(),
             trusted_networks: Vec::new(),

@@ -15,6 +15,7 @@
 //!   --data <dir>   覆盖数据目录（默认 %ProgramData%\BJUTNet），开发时指向可写目录
 //!   --debug        打开 DEBUG 日志
 
+mod billing;
 mod diag;
 mod install;
 mod ipc_server;
@@ -42,6 +43,11 @@ fn main() {
 
     if has("--version") || has("-v") {
         println!("BJUTNetSvc {}", version::full());
+        return;
+    }
+
+    if has("--demo-popups") {
+        billing::demo_popups();
         return;
     }
 
@@ -98,17 +104,39 @@ fn main() {
     let (cmd_tx, cmd_rx) = mpsc::channel::<ipc_server::Command>();
     let started = Instant::now();
     let stop = Arc::new(AtomicBool::new(false));
+    // 计费：共享 cfg/creds + 结果缓存（面板与开机自检共用）
+    let shared_cfg = Arc::new(Mutex::new(cn_core::config::Config::default()));
+    let shared_creds: Arc<Mutex<Option<cn_core::secret::Credentials>>> = Arc::new(Mutex::new(None));
+    let billing_cache: Arc<Mutex<Option<cn_core::billing::BillingData>>> = Arc::new(Mutex::new(None));
+    let billing_pending: billing::Pending = Arc::new(Mutex::new(None));
+
     let ipc_ctx = ipc_server::Ctx {
         status: status.clone(),
         cmd_tx,
         started,
+        shared_cfg: shared_cfg.clone(),
+        shared_creds: shared_creds.clone(),
+        billing: billing_cache.clone(),
+        billing_pending: billing_pending.clone(),
     };
     let deps = worker::Deps {
-        status,
+        status: status.clone(),
         cmd_rx,
         started,
-        stop,
+        stop: stop.clone(),
+        shared_cfg: shared_cfg.clone(),
+        shared_creds: shared_creds.clone(),
     };
+
+    // 开机自动查一次余额（是否启用由 config.billingAutoCheck 决定，默认关）
+    billing::spawn_auto_check(
+        status,
+        shared_cfg,
+        shared_creds,
+        billing_cache,
+        billing_pending,
+        stop,
+    );
 
     if has("--service") {
         service::run_as_service(debug, ipc_ctx, deps);

@@ -78,10 +78,11 @@ impl Bridge {
         std::thread::spawn(move || {
             let req = Request::with(cmd, params);
             // 诊断要探测门户，给足时间；其它命令 3 秒足够
-            let timeout = if cmd == "get_diag" {
-                Duration::from_secs(30)
-            } else {
-                Duration::from_secs(3)
+            let timeout = match cmd {
+                "get_diag" => Duration::from_secs(30),
+                // 计费要登录+取 dashboard，25 s 的 HTTP 预算
+                "billing_refresh" => Duration::from_secs(40),
+                _ => Duration::from_secs(3),
             };
             let r = cn_core::ipc::call_timeout(&req, timeout).map_err(|e| e.to_string());
             let _ = tx.send(UiEvent::Action(r, label));
