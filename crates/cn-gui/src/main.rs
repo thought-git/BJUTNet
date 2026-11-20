@@ -8,10 +8,14 @@
 mod app;
 mod bridge;
 mod fonts;
+mod single_instance;
 
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
+    // 已经在运行就直接激活旧窗口，不再开第二个
+    single_instance::ensure_single();
+
     let viewport = egui::ViewportBuilder::default()
         .with_title("BJUTNet 校园网自动登录")
         .with_inner_size([780.0, 600.0])

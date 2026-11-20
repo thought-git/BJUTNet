@@ -10,7 +10,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::util;
@@ -116,7 +116,10 @@ pub fn force_debug() {
 }
 
 pub fn level() -> Level {
-    match state().map(|s| s.level.load(Ordering::Relaxed)).unwrap_or(2) {
+    match state()
+        .map(|s| s.level.load(Ordering::Relaxed))
+        .unwrap_or(2)
+    {
         0 => Level::Err,
         1 => Level::Warn,
         3 => Level::Debug,
@@ -154,13 +157,7 @@ pub fn write(level: Level, msg: &str) {
     }
 
     let n = s.seq.fetch_add(1, Ordering::Relaxed) + 1;
-    let line = format!(
-        "{} [{}] [{:>6}] {}",
-        util::now_text(),
-        level.tag(),
-        n,
-        msg
-    );
+    let line = format!("{} [{}] [{:>6}] {}", util::now_text(), level.tag(), n, msg);
 
     if s.echo.load(Ordering::Relaxed) {
         if level == Level::Err {

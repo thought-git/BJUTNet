@@ -40,10 +40,7 @@ pub fn relaunch_as_admin(args: &[String]) -> Result<(), String> {
     if se_ok(r) {
         Ok(())
     } else {
-        Err(format!(
-            "提权失败（UAC 被取消？返回值 {}）",
-            r.0 as isize
-        ))
+        Err(format!("提权失败（UAC 被取消？返回值 {}）", r.0 as isize))
     }
 }
 
@@ -70,8 +67,14 @@ pub fn open_folder(path: &Path) {
 /// 重启后删除（用于删掉正在运行的卸载器自身或其目录）
 pub fn schedule_delete(path: &Path) -> Result<(), String> {
     let p = HSTRING::from(path.as_os_str().to_string_lossy().to_string());
-    unsafe { MoveFileExW(&p, windows::core::PCWSTR::null(), MOVEFILE_DELAY_UNTIL_REBOOT) }
-        .map_err(|e| format!("登记重启删除失败: {e}"))
+    unsafe {
+        MoveFileExW(
+            &p,
+            windows::core::PCWSTR::null(),
+            MOVEFILE_DELAY_UNTIL_REBOOT,
+        )
+    }
+    .map_err(|e| format!("登记重启删除失败: {e}"))
 }
 
 /// 等某个进程退出（用于"父进程退出后子进程再删目录"）
@@ -108,7 +111,10 @@ pub fn open_url(url: &str) -> Result<(), String> {
         ) -> isize;
     }
     let wide = |s: &str| -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     };
     let op = wide("open");
     let file = wide(url);

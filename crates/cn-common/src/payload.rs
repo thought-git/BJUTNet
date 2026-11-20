@@ -14,10 +14,10 @@ pub const FOOTER_LEN: usize = 8 + 8 + 8; // offset(8) + len(8) + magic(8)
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FileEntry {
-    pub path: String,       // 相对路径（正斜杠）
-    pub size: u64,          // 原始大小
-    pub comp_size: u64,     // 压缩后大小
-    pub compressed: bool,   // 是否 deflate 压缩
+    pub path: String,     // 相对路径（正斜杠）
+    pub size: u64,        // 原始大小
+    pub comp_size: u64,   // 压缩后大小
+    pub compressed: bool, // 是否 deflate 压缩
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -56,7 +56,8 @@ pub fn pack_dir(
 ) -> std::io::Result<Vec<u8>> {
     let mut items: Vec<(String, Vec<u8>)> = Vec::new();
     for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let entry =
+            entry.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         if !entry.file_type().is_file() {
             continue;
         }

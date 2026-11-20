@@ -50,11 +50,21 @@ pub struct Status {
     /// 连续失败计数：网络类 / 密码类
     pub fail_streak: u32,
     pub pw_fail_streak: u32,
+    /// 本月是否已停用自动连接
+    #[serde(default)]
+    pub month_off: bool,
+    /// 停用到什么时候（unix 秒，0 = 未停用）
+    #[serde(default)]
+    pub month_off_until_epoch: i64,
 }
 
 impl Status {
     pub fn state_color(&self) -> (u8, u8, u8) {
-        if self.online {
+        if self.state.contains("本月已停用") {
+            (120, 120, 120) // 灰：本月不再自动连
+        } else if self.state.contains("无网络") {
+            (120, 120, 120)
+        } else if self.online {
             (46, 160, 67) // 绿
         } else if self.state.contains("登录") || self.state.contains("检测") {
             (200, 140, 0) // 黄

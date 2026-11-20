@@ -137,6 +137,8 @@ struct Runtime {
     /// 最近一次网络判别的依据（给面板显示）
     last_evidence: String,
     last_verdict: Verdict,
+    /// 本月停用期间，用户点「立即重连」允许手动连一次
+    force_once: bool,
     last_sig: Option<String>,
     detect_cache: Option<(String, NetworkKind, Instant)>,
     last_heartbeat: Instant,
@@ -198,6 +200,7 @@ impl Runtime {
             env: EnvSnap::default(),
             last_evidence: String::new(),
             last_verdict: Verdict::Offline,
+            force_once: false,
             last_sig: None,
             detect_cache: None,
             last_heartbeat: Instant::now(),
@@ -334,12 +337,12 @@ impl Runtime {
             .and_then(|a| a.ipv4.first().cloned())
             .unwrap_or_default();
         self.env.mac = active.as_ref().map(|a| a.mac.clone()).unwrap_or_default();
-        self.env.gateway = active.as_ref().map(|a| a.gateway.clone()).unwrap_or_default();
-        self.env.ssid = ssid.clone().unwrap_or_default();
-        self.env.iface = active
+        self.env.gateway = active
             .as_ref()
-            .map(|a| a.name.clone())
+            .map(|a| a.gateway.clone())
             .unwrap_or_default();
+        self.env.ssid = ssid.clone().unwrap_or_default();
+        self.env.iface = active.as_ref().map(|a| a.name.clone()).unwrap_or_default();
         self.env.wireless = active.as_ref().map(|a| a.is_wireless).unwrap_or(false);
         self.env.prefix_len = active.as_ref().map(|a| a.prefix_len).unwrap_or(0);
 
@@ -351,12 +354,36 @@ impl Runtime {
             if self.creds.is_none() || self.machine.is_paused(Instant::now()) {
                 return;
             }
-            let first = self.machine.state != State::Probing;
+            self.last_verdict = Verdict::Offline;
+            let first = self.machine.state != State::NoNetwork;
+            self.machine.on_no_network();
             self.machine.force_now();
             if first {
                 logging::info("等待网络就绪（还没有 IPv4），每 2 秒重试（开机即登录）");
             }
             return;
+        }
+
+        // ---- 0. 本月停用：不进登录流程（手动「立即重连」可临时放行一次）----
+        let now_epoch = chrono::Local::now().timestamp();
+        if self.creds.is_some() && self.cfg.no_connect_until_epoch > now_epoch && !self.force_once {
+            if self.machine.state != State::MonthOff {
+                logging::info(format!(
+                    "本月已停用自动连接（到 {}），不再尝试登录；可在面板关闭该开关",
+                    chrono::DateTime::from_timestamp(self.cfg.no_connect_until_epoch, 0)
+                        .map(|d| d
+                            .with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d")
+                            .to_string())
+                        .unwrap_or_else(|| "-".into())
+                ));
+            }
+            self.machine.on_month_off();
+            return;
+        }
+        // 手动「立即重连」只放行这一次：本 tick 继续走，下次仍然停用
+        if self.force_once && self.cfg.no_connect_until_epoch > now_epoch {
+            self.force_once = false;
         }
 
         // ---- 2. 出网判定 ----
@@ -442,7 +469,10 @@ impl Runtime {
         // ---- 6. 登录 ----
         let (Some(ip), Some(mac)) = (
             active.as_ref().and_then(|a| a.ipv4.first().cloned()),
-            active.as_ref().map(|a| a.mac.clone()).filter(|m| !m.is_empty()),
+            active
+                .as_ref()
+                .map(|a| a.mac.clone())
+                .filter(|m| !m.is_empty()),
         ) else {
             logging::warn("没有可用的 IPv4/MAC，无法登录（等待 DHCP）");
             self.machine.force_now();
@@ -456,6 +486,7 @@ impl Runtime {
             ip
         ));
         self.machine.on_authenticating();
+        self.force_once = false;
 
         let started = Instant::now();
         let out: LoginOutcome = match kind {
@@ -500,7 +531,8 @@ impl Runtime {
                 out.raw_head.replace(['\r', '\n'], " ")
             ));
         }
-        self.machine.on_login_fail(out.fault, &out.message, &self.cfg);
+        self.machine
+            .on_login_fail(out.fault, &out.message, &self.cfg);
 
         if self.machine.state == State::Paused {
             logging::warn(format!(
@@ -540,14 +572,26 @@ impl Runtime {
         let (kind, ev) = portal::detect(&self.cfg, ssid, ipv4.as_deref(), &gw, timeout);
         self.last_evidence = ev.text();
         if ev.trusted {
-            logging::info(format!("网络判别: {} ← 用户手动标记（{}）", kind.text(), ev.trusted_desc));
+            logging::info(format!(
+                "网络判别: {} ← 用户手动标记（{}）",
+                kind.text(),
+                ev.trusted_desc
+            ));
         } else {
             logging::info(format!("网络判别: {} ← {}", kind.text(), ev.text()));
         }
         for note in &ev.notes {
             logging::debug(format!("  判别备注: {note}"));
         }
-        self.detect_cache = Some((key, kind, Instant::now()));
+        // 只缓存明确的宿舍/公共网络；None（门户没起来/探不通）和按网段推断的结果
+        // 不能固化，否则开机一次失败会"非校园网"待机一整天。
+        let cacheable = matches!(kind, NetworkKind::Dorm | NetworkKind::Public) && !ev.guessed;
+        self.detect_cache = if cacheable {
+            Some((key, kind, Instant::now()))
+        } else {
+            self.detect_cache = None;
+            None
+        };
         kind
     }
 
@@ -581,6 +625,7 @@ impl Runtime {
             match cmd {
                 Command::Reconnect => {
                     logging::info("面板指令: 立即重连");
+                    self.force_once = true;
                     self.machine.force_now();
                 }
                 Command::Pause(Some(minutes)) => {
@@ -606,6 +651,7 @@ impl Runtime {
                 }
                 Command::VerifyLogin => {
                     logging::info("面板指令: 重连并验证（先注销当前会话）");
+                    self.force_once = true;
                     if let Some(creds) = self.creds.clone() {
                         let (ip, mac) = (self.env.ip.clone(), self.env.mac.clone());
                         if !ip.is_empty() && !mac.is_empty() {
@@ -675,8 +721,7 @@ impl Runtime {
         };
         let paused_until_epoch = match (m.state, m.paused_until) {
             (State::Paused, Some(t)) => {
-                chrono::Local::now().timestamp()
-                    + t.saturating_duration_since(now).as_secs() as i64
+                chrono::Local::now().timestamp() + t.saturating_duration_since(now).as_secs() as i64
             }
             _ => 0,
         };
@@ -708,6 +753,12 @@ impl Runtime {
             uptime_sec: self.started.elapsed().as_secs(),
             fail_streak: m.fail_streak,
             pw_fail_streak: m.pw_fail_streak,
+            month_off: matches!(m.state, State::MonthOff),
+            month_off_until_epoch: if m.state == State::MonthOff {
+                self.cfg.no_connect_until_epoch
+            } else {
+                0
+            },
         };
 
         if let Ok(mut g) = self.status.lock() {

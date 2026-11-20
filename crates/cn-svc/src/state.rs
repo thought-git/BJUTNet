@@ -29,6 +29,10 @@ pub enum State {
     Online,
     Backoff,
     Paused,
+    /// 没有网络（没有 IPv4 / 网卡断开）
+    NoNetwork,
+    /// 本月已停用自动连接（用户手动设置，避免流量超额）
+    MonthOff,
 }
 
 impl State {
@@ -41,6 +45,8 @@ impl State {
             State::Online => "在线",
             State::Backoff => "退避等待",
             State::Paused => "已暂停",
+            State::NoNetwork => "无网络",
+            State::MonthOff => "本月已停用自动连接",
         }
     }
 
@@ -73,6 +79,20 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// 没网：即使上次是在线，也要把状态改回来（否则面板会一直显示在线）
+    pub fn on_no_network(&mut self) {
+        if self.state != State::Paused && self.state != State::Unconfigured {
+            self.state = State::NoNetwork;
+        }
+        self.kind = NetworkKind::None;
+        self.last_err.clear();
+    }
+
+    /// 本月停用：不进登录流程
+    pub fn on_month_off(&mut self) {
+        self.state = State::MonthOff;
+    }
+
     pub fn new() -> Self {
         Self {
             state: State::Unconfigured,
@@ -251,11 +271,13 @@ impl Machine {
                     .paused_until
                     .map(|t| t.saturating_duration_since(now))
                     .unwrap_or(Duration::from_secs(60));
-                left.min(Duration::from_secs(60)).max(Duration::from_secs(5))
+                left.min(Duration::from_secs(60))
+                    .max(Duration::from_secs(5))
             }
             State::Backoff => {
                 let left = self.next_try.saturating_duration_since(now);
-                left.min(Duration::from_secs(60)).max(Duration::from_secs(1))
+                left.min(Duration::from_secs(60))
+                    .max(Duration::from_secs(1))
             }
             State::Idle => Duration::from_secs(60),
             _ => cfg.offline_interval(),

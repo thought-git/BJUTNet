@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 
-use eframe::egui;
 use cn_common::payload::GameManifest;
+use eframe::egui;
 
 use cn_core::{app, net, shell};
 
@@ -43,10 +43,7 @@ pub struct Wizard {
 }
 
 impl Wizard {
-    pub fn new(
-        payload: Result<(GameManifest, Vec<u8>), String>,
-        args: Vec<String>,
-    ) -> Self {
+    pub fn new(payload: Result<(GameManifest, Vec<u8>), String>, args: Vec<String>) -> Self {
         let (manifest, bytes, err, page) = match payload {
             Ok((m, p)) => (Some(m), Some(p), String::new(), Page::Welcome),
             Err(e) => (None, None, e, Page::NoPayload),
@@ -176,9 +173,7 @@ impl Wizard {
             .spacing([10.0, 8.0])
             .show(ui, |ui| {
                 ui.label("安装目录");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.dir_text).desired_width(380.0),
-                );
+                ui.add(egui::TextEdit::singleline(&mut self.dir_text).desired_width(380.0));
                 if ui.button("浏览…").clicked() {
                     let start = PathBuf::from(&self.dir_text);
                     if let Some(p) = cn_common::winutil::pick_folder(&start.to_string_lossy()) {
@@ -203,7 +198,11 @@ impl Wizard {
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let label = if self.elevated { "开始安装" } else { "以管理员身份安装" };
+            let label = if self.elevated {
+                "开始安装"
+            } else {
+                "以管理员身份安装"
+            };
             if ui.button(egui::RichText::new(label).size(16.0)).clicked() {
                 if self.elevated {
                     self.start();

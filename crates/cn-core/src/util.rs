@@ -29,14 +29,14 @@ pub unsafe fn from_wide_ptr(ptr: *const u16) -> String {
 
 /// 最近一次 Win32 错误码
 pub fn last_error() -> u32 {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(0) as u32
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32
 }
 
 /// 本地时间，`2027-01-01 12:00:00.123` 形态
 pub fn now_text() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    chrono::Local::now()
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string()
 }
 
 /// 本地日期，`20270101`
@@ -60,7 +60,9 @@ pub fn mask_url(input: &str) -> String {
         let end = rest.find('&').unwrap_or(rest.len());
         let pair = &rest[..end];
         match pair.split_once('=') {
-            Some((k, v)) if k.eq_ignore_ascii_case("upass") || k.eq_ignore_ascii_case("user_password") => {
+            Some((k, v))
+                if k.eq_ignore_ascii_case("upass") || k.eq_ignore_ascii_case("user_password") =>
+            {
                 out.push_str(k);
                 out.push_str("=***");
                 let _ = v;

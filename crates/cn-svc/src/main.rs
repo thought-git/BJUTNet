@@ -46,11 +46,6 @@ fn main() {
         return;
     }
 
-    if has("--demo-popups") {
-        billing::demo_popups();
-        return;
-    }
-
     if has("--probe") {
         probe::run();
         return;
@@ -105,9 +100,14 @@ fn main() {
     let started = Instant::now();
     let stop = Arc::new(AtomicBool::new(false));
     // 计费：共享 cfg/creds + 结果缓存（面板与开机自检共用）
-    let shared_cfg = Arc::new(Mutex::new(cn_core::config::Config::default()));
+    // 注意：这里必须先从磁盘加载一次配置。用 Config::default() 会让开机自检线程
+    // 在 worker 还没加载配置时读到 billingAutoCheck=false，直接退出（开机弹窗失效的根因）。
+    let initial_cfg =
+        cn_core::config::Config::load_existing(&paths::config_path()).unwrap_or_default();
+    let shared_cfg = Arc::new(Mutex::new(initial_cfg));
     let shared_creds: Arc<Mutex<Option<cn_core::secret::Credentials>>> = Arc::new(Mutex::new(None));
-    let billing_cache: Arc<Mutex<Option<cn_core::billing::BillingData>>> = Arc::new(Mutex::new(None));
+    let billing_cache: Arc<Mutex<Option<cn_core::billing::BillingData>>> =
+        Arc::new(Mutex::new(None));
     let billing_pending: billing::Pending = Arc::new(Mutex::new(None));
 
     let ipc_ctx = ipc_server::Ctx {
@@ -182,7 +182,11 @@ fn rpc(raw: &str) -> i32 {
                 "data": resp.data,
             });
             println!("{}", serde_json::to_string(&out).unwrap_or_default());
-            if resp.ok { 0 } else { 2 }
+            if resp.ok {
+                0
+            } else {
+                2
+            }
         }
         Err(e) => {
             eprintln!("连不上服务: {e}");
@@ -199,7 +203,10 @@ fn ipc_selftest(cmd: &str) -> i32 {
         Ok(resp) if resp.ok => {
             println!("✓ {cmd} 成功");
             match cmd {
-                "status" => println!("{}", serde_json::to_string_pretty(&resp.data).unwrap_or_default()),
+                "status" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&resp.data).unwrap_or_default()
+                ),
                 "get_logs" => {
                     if let Some(lines) = resp.data.get("lines").and_then(|v| v.as_array()) {
                         for l in lines.iter().rev().take(15).rev() {

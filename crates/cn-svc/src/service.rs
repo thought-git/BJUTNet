@@ -146,7 +146,8 @@ mod scm {
 
     unsafe extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
         let name = wide(SERVICE_NAME);
-        let handle = RegisterServiceCtrlHandlerExW(name.as_ptr(), Some(handler), std::ptr::null_mut());
+        let handle =
+            RegisterServiceCtrlHandlerExW(name.as_ptr(), Some(handler), std::ptr::null_mut());
         STATUS_HANDLE.store(handle as usize, Ordering::Relaxed);
         if handle.is_null() {
             cn_core::logging::err("RegisterServiceCtrlHandlerExW 失败，服务无法上报状态");

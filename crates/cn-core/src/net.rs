@@ -14,9 +14,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST,
     IP_ADAPTER_ADDRESSES_LH,
 };
-use windows::Win32::Networking::WinSock::{
-    AF_INET, ADDRESS_FAMILY, SOCKADDR, SOCKADDR_IN,
-};
+use windows::Win32::Networking::WinSock::{ADDRESS_FAMILY, AF_INET, SOCKADDR, SOCKADDR_IN};
 
 use crate::util;
 
@@ -105,7 +103,11 @@ impl Adapter {
             } else {
                 self.ipv4.join(",")
             },
-            if self.gateway.is_empty() { "-" } else { &self.gateway },
+            if self.gateway.is_empty() {
+                "-"
+            } else {
+                &self.gateway
+            },
             if self.mac.is_empty() { "-" } else { &self.mac },
             self.up,
             self.ipv4_metric,
@@ -374,7 +376,9 @@ pub fn is_elevated() -> bool {
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
             return false;
         }
-        let mut elev = TokenElevation { token_is_elevated: 0 };
+        let mut elev = TokenElevation {
+            token_is_elevated: 0,
+        };
         let mut ret: u32 = 0;
         let ok = GetTokenInformation(
             token,
@@ -400,7 +404,6 @@ pub fn same_subnet(ip: Ipv4Addr, gw: Ipv4Addr, prefix: u8) -> bool {
     };
     (u32::from(ip) & mask) == (u32::from(gw) & mask)
 }
-
 
 /// `ip` 是否落在 `cidr`（形如 `10.126.64.0/19`，不带 `/` 视为 /32）
 pub fn ip_in_cidr(ip: &str, cidr: &str) -> bool {

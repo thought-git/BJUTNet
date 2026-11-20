@@ -68,9 +68,9 @@ impl BillingData {
         }
     }
 
-    /// 当月剩余流量是否低于阈值（threshold=0 表示关闭）
-    pub fn flow_below(&self, threshold_mb: u64) -> bool {
-        threshold_mb > 0 && self.left_mb < threshold_mb as f64
+    /// 当月剩余流量是否小于等于阈值（0 表示流量为 0 时也提醒）
+    pub fn flow_at_or_below(&self, threshold_mb: u64) -> bool {
+        self.left_mb <= threshold_mb as f64
     }
 }
 
@@ -464,9 +464,9 @@ mod tests {
         assert_eq!(d.arrears_yuan(), 0.0);
         assert_eq!(d.package_price_yuan, Some(20.0));
         assert!(!d.balance_below_package()); // 20.445 > 20
-        assert!(d.flow_below(45000));        // 42951 < 45000
-        assert!(!d.flow_below(40000));
-        assert!(!d.flow_below(0));           // 0 = 关闭
+        assert!(d.flow_at_or_below(45000)); // 42951 < 45000
+        assert!(!d.flow_at_or_below(40000));
+        assert!(!d.flow_at_or_below(0)); // 阈值 0 只在流量确实为 0 时命中
     }
 
     #[test]

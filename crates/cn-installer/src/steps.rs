@@ -5,8 +5,8 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use cn_core::{app, net, shell, svcctl, winreg};
 use cn_common::payload::{extract_payload, GameManifest};
+use cn_core::{app, net, shell, svcctl, winreg};
 
 #[derive(Clone)]
 pub struct Options {

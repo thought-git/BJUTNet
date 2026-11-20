@@ -177,7 +177,14 @@ impl DetectEvidence {
                 "不可达".to_string()
             },
             if self.trusted {
-                format!(" [用户标记为校园网{}]", if self.trusted_desc.is_empty() { String::new() } else { format!(": {}", self.trusted_desc) })
+                format!(
+                    " [用户标记为校园网{}]",
+                    if self.trusted_desc.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", self.trusted_desc)
+                    }
+                )
             } else if self.guessed {
                 " [按网段推断]".to_string()
             } else {
@@ -288,8 +295,11 @@ pub fn detect(
             };
             if let Some(k) = guessed {
                 ev.guessed = true;
-                ev.notes
-                    .push(format!("两个门户都不可达，按网段 {} 推断为 {}", ipv4.unwrap_or("-"), k.text()));
+                ev.notes.push(format!(
+                    "两个门户都不可达，按网段 {} 推断为 {}",
+                    ipv4.unwrap_or("-"),
+                    k.text()
+                ));
                 k
             } else {
                 NetworkKind::None
@@ -424,10 +434,7 @@ mod tests {
 
     #[test]
     fn jsonp_unwrap() {
-        assert_eq!(
-            unwrap_jsonp(r#"jsonpReturn({"a":1});"#),
-            r#"{"a":1}"#
-        );
+        assert_eq!(unwrap_jsonp(r#"jsonpReturn({"a":1});"#), r#"{"a":1}"#);
         assert_eq!(unwrap_jsonp(r#"dr1003({"result":1})"#), r#"{"result":1}"#);
         assert_eq!(unwrap_jsonp("404 Not Found"), "404 Not Found");
     }
@@ -446,7 +453,10 @@ mod tests {
         // 实测：密码错时门户返回 {"result":0,"msg":"ldap auth error"}
         assert_eq!(classify_msg("ldap auth error"), LoginFault::AccountPassword);
         assert_eq!(classify_msg("密码错误"), LoginFault::AccountPassword);
-        assert_eq!(classify_msg("无法获取用户认证账号！"), LoginFault::AccountPassword);
+        assert_eq!(
+            classify_msg("无法获取用户认证账号！"),
+            LoginFault::AccountPassword
+        );
         assert_eq!(classify_msg("timeout"), LoginFault::Network);
     }
 
@@ -465,5 +475,40 @@ mod tests {
     fn b64_matches_known_value() {
         // 实测：10.126.83.10 → MTAuMTI2LjgzLjEw
         assert_eq!(b64("10.126.83.10"), "MTAuMTI2LjgzLjEw");
+    }
+}
+
+/// 把 URL 里的密码参数值替换成 ***（日志/状态里只保留结构）
+pub fn redact_url(url: &str) -> String {
+    let mut out = String::with_capacity(url.len());
+    for (i, part) in url.split('&').enumerate() {
+        if i > 0 {
+            out.push('&');
+        }
+        let key = ["user_password=", "upass=", "password=", "DDDDD="]
+            .iter()
+            .find(|k| part.starts_with(**k));
+        match key {
+            Some(k) => {
+                out.push_str(k);
+                out.push_str("***");
+            }
+            None => out.push_str(part),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_url;
+    #[test]
+    fn hides_password_values() {
+        let u = "http://a/login?user_account=1&user_password=secret&upass=x&wlan_user_ip=2";
+        let r = redact_url(u);
+        assert!(!r.contains("secret"));
+        assert!(!r.contains("upass=x"));
+        assert!(r.contains("user_password=***"));
+        assert!(r.contains("wlan_user_ip=2"));
     }
 }

@@ -32,7 +32,13 @@ fn payload_roundtrip() {
     let uninstaller = vec![9u8; 4096];
 
     let mut manifest = make_manifest();
-    let payload = pack_dir(&root, &mut manifest, &[("uninstaller.exe".into(), uninstaller.clone())], |_, _| {}).unwrap();
+    let payload = pack_dir(
+        &root,
+        &mut manifest,
+        &[("uninstaller.exe".into(), uninstaller.clone())],
+        |_, _| {},
+    )
+    .unwrap();
 
     let template = vec![0x11u8; 4096];
     let setup = build_setup_exe(&template, &payload);
@@ -49,13 +55,22 @@ fn payload_roundtrip() {
     let _ = std::fs::remove_dir_all(&dest);
     extract_payload(&m2, &p2, &dest, |_, _, _| {}).unwrap();
 
-    assert_eq!(std::fs::read(dest.join("game.exe")).unwrap(), vec![0u8; 65536]);
-    assert_eq!(std::fs::read(dest.join("assets/sub/level.dat")).unwrap(), binary);
+    assert_eq!(
+        std::fs::read(dest.join("game.exe")).unwrap(),
+        vec![0u8; 65536]
+    );
+    assert_eq!(
+        std::fs::read(dest.join("assets/sub/level.dat")).unwrap(),
+        binary
+    );
     assert_eq!(
         std::fs::read(dest.join("assets/readme.txt")).unwrap(),
         "你好，世界！".repeat(2000).as_bytes()
     );
-    assert_eq!(std::fs::read(dest.join("uninstaller.exe")).unwrap(), uninstaller);
+    assert_eq!(
+        std::fs::read(dest.join("uninstaller.exe")).unwrap(),
+        uninstaller
+    );
 
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&dest);
@@ -69,7 +84,13 @@ fn real_setup_parses() {
     // 验证打包器 CLI 产出的真实安装包（通过环境变量 SETUP_EXE 指定路径）
     let path = std::env::var("SETUP_EXE").expect("需要 SETUP_EXE 环境变量");
     let (m, p) = read_payload(Path::new(&path)).expect("真实安装包解析失败");
-    println!("真实安装包: 游戏={} v{} 主程序={} 文件数={}", m.game_name, m.version, m.main_exe, m.files.len());
+    println!(
+        "真实安装包: 游戏={} v{} 主程序={} 文件数={}",
+        m.game_name,
+        m.version,
+        m.main_exe,
+        m.files.len()
+    );
     assert!(!m.files.is_empty());
     assert!(m.files.iter().any(|f| f.path == m.uninstaller_name));
     assert!(p.len() > 0);
@@ -79,14 +100,25 @@ fn real_setup_parses() {
 fn shortcut_and_registry() {
     // 快捷方式：写入临时 .lnk（无需真实桌面）
     let lnk = std::env::temp_dir().join(format!("gp_test_{}.lnk", std::process::id()));
-    let target = std::env::current_exe().unwrap().to_string_lossy().to_string();
-    winutil::create_shortcut(&lnk.to_string_lossy(), &target, "", &target, "测试快捷方式").expect("创建快捷方式失败");
+    let target = std::env::current_exe()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    winutil::create_shortcut(&lnk.to_string_lossy(), &target, "", &target, "测试快捷方式")
+        .expect("创建快捷方式失败");
     assert!(lnk.exists(), "快捷方式文件应存在");
     std::fs::remove_file(&lnk).unwrap();
 
     // 注册表卸载项：写入 → 验证存在 → 删除
     let app_id = format!("GP_TEST_{}", std::process::id());
-    match winutil::write_uninstall_entry(&app_id, "测试游戏", "1.0.0", "C:\\fake\\dir", "C:\\fake\\dir\\game.exe", "C:\\fake\\dir\\uninstaller.exe") {
+    match winutil::write_uninstall_entry(
+        &app_id,
+        "测试游戏",
+        "1.0.0",
+        "C:\\fake\\dir",
+        "C:\\fake\\dir\\game.exe",
+        "C:\\fake\\dir\\uninstaller.exe",
+    ) {
         Ok(()) => {
             let key_path = winutil::uninstall_key_path(&app_id);
             let hkcu = windows::Win32::System::Registry::HKEY_CURRENT_USER;

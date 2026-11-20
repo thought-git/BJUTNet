@@ -14,10 +14,10 @@ pub const INSTALL_META: &str = "install.json";
 
 pub const SERVICE_NAME: &str = "BJUTNetSvc";
 pub const SERVICE_DISPLAY: &str = "BJUTNet 校园网自动登录服务";
-pub const SERVICE_DESC: &str = "自动检测校园网环境（宿舍网络 / 公共网络，有线无线均支持）并完成 Dr.COM 门户认证";
+pub const SERVICE_DESC: &str =
+    "自动检测校园网环境（宿舍网络 / 公共网络，有线无线均支持）并完成 Dr.COM 门户认证";
 
-pub const UNINSTALL_REG_PATH: &str =
-    r"Software\Microsoft\Windows\CurrentVersion\Uninstall\BJUTNet";
+pub const UNINSTALL_REG_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\BJUTNet";
 
 /// `%ProgramData%` 下的子目录名
 pub const DATA_SUBDIR: &str = "BJUTNet";

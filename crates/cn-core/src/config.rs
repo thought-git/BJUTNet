@@ -54,7 +54,6 @@ impl Default for PublicCfg {
     }
 }
 
-
 /// 用户手动标记的"校园网"（面板里"把当前网络标记为校园网"写这里）。
 ///
 /// 三个字段都是"命中任一即可"：SSID / 网关 / 网段。这样无论是
@@ -88,7 +87,10 @@ impl TrustedNet {
                 }
             }
         }
-        if !self.gateway.is_empty() && !gateway.is_empty() && gateway.eq_ignore_ascii_case(&self.gateway) {
+        if !self.gateway.is_empty()
+            && !gateway.is_empty()
+            && gateway.eq_ignore_ascii_case(&self.gateway)
+        {
             return true;
         }
         if !self.subnet.is_empty() {
@@ -105,7 +107,11 @@ impl TrustedNet {
         if !self.name.is_empty() {
             return self.name.clone();
         }
-        let kind = if self.is_public() { "公共网络" } else { "宿舍网络" };
+        let kind = if self.is_public() {
+            "公共网络"
+        } else {
+            "宿舍网络"
+        };
         let mut parts = vec![kind.to_string()];
         if !self.ssid.is_empty() {
             parts.push(format!("SSID={}", self.ssid));
@@ -157,18 +163,58 @@ pub struct Config {
     /// 面板是否隐藏金额（余额/欠费金额）
     #[serde(default)]
     pub billing_hide_amount: bool,
-    /// 可选子条件：余额不足提醒**仅在无法出网时**弹窗
-    #[serde(default, alias = "billingPopupOffline")]
-    pub billing_popup_only_offline: bool,
-    /// 当月剩余流量低于该值（MB）时弹窗；0 = 关闭（1024MB = 1GB）
+    /// 流量提醒：仅在无法出网时弹窗
     #[serde(default)]
+    pub billing_flow_only_offline: bool,
+    /// 余额提醒：是否启用
+    #[serde(default = "default_true")]
+    pub billing_balance_alert: bool,
+    /// 余额提醒：仅在无法出网时弹窗
+    #[serde(
+        default,
+        alias = "billingPopupOnlyOffline",
+        alias = "billingPopupOffline"
+    )]
+    pub billing_balance_only_offline: bool,
+    /// 流量提醒开关（关闭后不提醒）
+    #[serde(default = "default_true")]
+    pub billing_flow_alert: bool,
+    /// 当月剩余流量 <= 该值（MB）时弹窗；0 表示流量为 0 时提醒（默认 512，1024MB=1GB）
+    #[serde(default = "default_flow_alert_mb")]
     pub billing_flow_alert_mb: u64,
+    /// 本月不再自动连接校园网（停用到的 unix 秒；0 = 不启用）
+    #[serde(default)]
+    pub no_connect_until_epoch: i64,
 
     pub dorm: DormCfg,
     pub public: PublicCfg,
 
     /// 用户手动标记为校园网的网络（面板里加）
     pub trusted_networks: Vec<TrustedNet>,
+}
+
+/// 下月 1 日 00:00（本地时区）的 unix 秒；"本月不再连接"用
+pub fn next_month_start_epoch() -> i64 {
+    use chrono::{Datelike, Local, TimeZone};
+    let now = Local::now();
+    let (y, m) = if now.month() == 12 {
+        (now.year() + 1, 1)
+    } else {
+        (now.year(), now.month() + 1)
+    };
+    Local
+        .with_ymd_and_hms(y, m, 1, 0, 0, 0)
+        .single()
+        .map(|d| d.timestamp())
+        .unwrap_or(0)
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_flow_alert_mb() -> u64 {
+    512
 }
 
 impl Default for Config {
@@ -189,8 +235,12 @@ impl Default for Config {
             log_level: "INFO".into(),
             billing_auto_check: false,
             billing_hide_amount: false,
-            billing_popup_only_offline: false,
-            billing_flow_alert_mb: 0,
+            billing_flow_only_offline: false,
+            billing_balance_alert: true,
+            billing_balance_only_offline: false,
+            billing_flow_alert: true,
+            billing_flow_alert_mb: 512,
+            no_connect_until_epoch: 0,
             dorm: DormCfg::default(),
             public: PublicCfg::default(),
             trusted_networks: Vec::new(),
@@ -221,7 +271,12 @@ impl Config {
     }
 
     /// 当前网络是否被用户标记过（返回命中的那条）
-    pub fn trusted_match(&self, ssid: Option<&str>, ip: Option<&str>, gateway: &str) -> Option<&TrustedNet> {
+    pub fn trusted_match(
+        &self,
+        ssid: Option<&str>,
+        ip: Option<&str>,
+        gateway: &str,
+    ) -> Option<&TrustedNet> {
         self.trusted_networks
             .iter()
             .find(|t| t.matches(ssid, ip, gateway))
@@ -330,4 +385,17 @@ pub fn replace(tmp: &Path, dst: &Path) -> std::io::Result<()> {
         let _ = std::fs::remove_file(dst);
     }
     std::fs::rename(tmp, dst)
+}
+
+#[cfg(test)]
+mod month_tests {
+    use super::next_month_start_epoch;
+
+    #[test]
+    fn next_month_is_in_future_and_within_a_month() {
+        let now = chrono::Local::now().timestamp();
+        let next = next_month_start_epoch();
+        assert!(next > now, "next={next} now={now}");
+        assert!(next - now <= 32 * 86_400);
+    }
 }

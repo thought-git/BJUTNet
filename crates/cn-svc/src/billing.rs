@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use cn_core::billing::{BillingClient, BillingData, BillingError};
 use cn_core::config::Config;
 use cn_core::ipc::protocol::Status;
-use cn_core::secret::Credentials;
 use cn_core::logging;
+use cn_core::secret::Credentials;
 
 pub const TIMEOUT: Duration = Duration::from_secs(25);
 
@@ -30,7 +30,12 @@ pub fn refresh(
     code: Option<&str>,
 ) -> Result<BillingData, BillingError> {
     let c = creds.ok_or_else(|| BillingError::Auth("尚未配置学号密码".into()))?;
-    let account = c.account.split('@').next().unwrap_or(&c.account).to_string();
+    let account = c
+        .account
+        .split('@')
+        .next()
+        .unwrap_or(&c.account)
+        .to_string();
 
     if let Some(code) = code {
         let mut client = match pending.lock().ok().and_then(|mut g| g.take()) {
@@ -97,18 +102,35 @@ pub fn spawn_auto_check(
 ) {
     std::thread::spawn(move || {
         let started = Instant::now();
+
+        // 开机时服务往往比用户登录更早启动：先等桌面会话就绪，
+        // 否则弹窗发出去时还没有登录用户，会被丢掉。
         loop {
             if stop.load(Ordering::Acquire) {
                 return;
             }
-            let (auto, only_offline) = {
-                let c = cfg.lock().ok().map(|g| g.clone()).unwrap_or_default();
-                (c.billing_auto_check, c.billing_popup_only_offline)
-            };
+            if active_console_session().is_some() {
+                break;
+            }
+            if started.elapsed() >= Duration::from_secs(15 * 60) {
+                logging::info("等不到登录会话，跳过开机计费提醒");
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+
+        loop {
+            if stop.load(Ordering::Acquire) {
+                return;
+            }
+            let auto = cfg
+                .lock()
+                .ok()
+                .map(|g| g.billing_auto_check)
+                .unwrap_or(false);
             if !auto {
                 return; // 主开关关掉就不做任何查询/提醒
             }
-            let _ = only_offline;
             let st = status.lock().ok().map(|g| g.clone()).unwrap_or_default();
             // 已经配置且有网络结论（在线），或者等够 90 秒（用于"无法出网"判断）
             if st.configured && (st.online || started.elapsed() >= Duration::from_secs(90)) {
@@ -120,16 +142,10 @@ pub fn spawn_auto_check(
             std::thread::sleep(Duration::from_secs(2));
         }
 
-        let st = status.lock().ok().map(|g| g.clone()).unwrap_or_default();
         let cfg_now = cfg.lock().ok().map(|g| g.clone()).unwrap_or_default();
         let creds_now = creds.lock().ok().and_then(|g| g.clone());
 
         if !cfg_now.billing_auto_check {
-            return;
-        }
-        // 可选子条件：仅当无法出网时才弹（对下面两种提醒都生效）
-        if cfg_now.billing_popup_only_offline && st.online {
-            logging::info("当前可出网：按设置不弹窗（仅无法出网时提醒）");
             return;
         }
         let Some(creds_now) = creds_now else {
@@ -165,27 +181,9 @@ pub fn spawn_auto_check(
 
         // 取最新在线状态（查询期间可能已经掉线）
         let st = status.lock().ok().map(|g| g.clone()).unwrap_or_default();
-        if cfg_now.billing_popup_only_offline && st.online {
-            logging::info("当前已可出网，不弹窗");
-            return;
-        }
 
-        let mut lines: Vec<String> = Vec::new();
-        if d.flow_below(cfg_now.billing_flow_alert_mb) {
-            lines.push(format!(
-                "· 当月剩余流量 {:.0} MB（约 {:.2} GB），低于设定的 {} MB",
-                d.left_mb,
-                d.left_mb / 1024.0,
-                cfg_now.billing_flow_alert_mb
-            ));
-        }
-        if d.balance_below_package() {
-            lines.push(format!(
-                "· 余额 ¥{:.2}，低于当前套餐价 ¥{:.2}",
-                d.balance_yuan,
-                d.package_price_yuan.unwrap_or(0.0)
-            ));
-        }
+        // 两种提醒各自独立开关 + 各自"仅无法出网时"条件
+        let lines = alert_lines(&cfg_now, &d, st.online);
         if lines.is_empty() {
             logging::info("余额与流量均未触发提醒阈值");
             return;
@@ -205,49 +203,40 @@ fn fresh_session() -> (Option<BillingClient>, Vec<u8>) {
     (Some(c), image)
 }
 
-/// 手动预览三种弹窗（`BJUTNetSvc.exe --demo-popups`）
-pub fn demo_popups() {
-    let st = Status::default();
-    let base = BillingData {
-        balance_yuan: 15.0,
-        used_mb: 118000.0,
-        left_mb: 512.0,
-        used_time_min: 3600,
-        package_price_yuan: Some(20.0),
-        fetched_epoch: chrono::Local::now().timestamp(),
-    };
-    popup_alerts(
-        &st,
-        &[format!(
-            "· 当月剩余流量 {:.0} MB（约 {:.2} GB），低于设定的 1024 MB",
-            base.left_mb,
-            base.left_mb / 1024.0
-        )],
-    );
-    popup_alerts(
-        &st,
-        &[format!(
+/// 计算需要弹窗的提醒条目（纯函数，方便单测）
+pub fn alert_lines(cfg: &Config, d: &BillingData, online: bool) -> Vec<String> {
+    let mut lines = Vec::new();
+    if cfg.billing_flow_alert
+        && d.flow_at_or_below(cfg.billing_flow_alert_mb)
+        && !(cfg.billing_flow_only_offline && online)
+    {
+        lines.push(format!(
+            "· 当月剩余流量 {:.0} MB（约 {:.2} GB），低于设定的 {} MB",
+            d.left_mb,
+            d.left_mb / 1024.0,
+            cfg.billing_flow_alert_mb
+        ));
+    }
+    if cfg.billing_balance_alert
+        && d.balance_below_package()
+        && !(cfg.billing_balance_only_offline && online)
+    {
+        lines.push(format!(
             "· 余额 ¥{:.2}，低于当前套餐价 ¥{:.2}",
-            base.balance_yuan,
-            base.package_price_yuan.unwrap_or(0.0)
-        )],
-    );
-    let mut offline = st.clone();
-    offline.online = false;
-    offline.ip = "10.126.83.10".into();
-    offline.iface = "WLAN".into();
-    popup_alerts(
-        &offline,
-        &[
-            "· 当月剩余流量 512 MB（约 0.50 GB），低于设定的 1024 MB".to_string(),
-            "· 余额 ¥15.00，低于当前套餐价 ¥20.00".to_string(),
-        ],
-    );
+            d.balance_yuan,
+            d.package_price_yuan.unwrap_or(0.0)
+        ));
+    }
+    lines
 }
 
 /// 组合提醒弹窗（流量/余额），附当前出网与出口信息
-fn popup_alerts(st: &Status, lines: &[String]) {
-    let iface = if st.iface.is_empty() { "未知" } else { &st.iface };
+pub fn popup_alerts(st: &Status, lines: &[String]) {
+    let iface = if st.iface.is_empty() {
+        "未知"
+    } else {
+        &st.iface
+    };
     let ip = if st.ip.is_empty() { "无" } else { &st.ip };
     let mut text = String::from("BJUTNet 校园网提醒：\n\n");
     if !st.online {
@@ -259,6 +248,111 @@ fn popup_alerts(st: &Status, lines: &[String]) {
         iface, ip
     ));
     message_box("BJUTNet 校园网提醒", &text);
+}
+
+/// 当前是否有已登录（WTSActive）的控制台会话
+fn active_console_session() -> Option<u32> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WTSGetActiveConsoleSessionId() -> u32;
+    }
+    #[link(name = "wtsapi32")]
+    extern "system" {
+        fn WTSQuerySessionInformationW(
+            server: *mut core::ffi::c_void,
+            session: u32,
+            info_class: i32,
+            buffer: *mut *mut u16,
+            bytes: *mut u32,
+        ) -> i32;
+        fn WTSFreeMemory(memory: *mut core::ffi::c_void);
+    }
+    const WTS_CONNECT_STATE: i32 = 8; // WTSConnectState
+    const WTS_ACTIVE: u32 = 0;
+
+    let session = unsafe { WTSGetActiveConsoleSessionId() };
+    if session == u32::MAX {
+        return None;
+    }
+    let mut buf: *mut u16 = std::ptr::null_mut();
+    let mut bytes: u32 = 0;
+    let ok = unsafe {
+        WTSQuerySessionInformationW(
+            std::ptr::null_mut(),
+            session,
+            WTS_CONNECT_STATE,
+            &mut buf,
+            &mut bytes,
+        )
+    };
+    if ok == 0 || buf.is_null() {
+        return None;
+    }
+    let state = unsafe { *(buf as *const u32) };
+    unsafe { WTSFreeMemory(buf as *mut core::ffi::c_void) };
+    if state == WTS_ACTIVE {
+        Some(session)
+    } else {
+        None
+    }
+}
+
+/// 用 WTS 把消息框发到当前控制台会话；成功返回 true
+fn wts_message(caption: &str, text: &str) -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WTSGetActiveConsoleSessionId() -> u32;
+    }
+    #[link(name = "wtsapi32")]
+    extern "system" {
+        fn WTSSendMessageW(
+            server: *mut core::ffi::c_void,
+            session: u32,
+            title: *const u16,
+            title_len: u32,
+            msg: *const u16,
+            msg_len: u32,
+            style: u32,
+            timeout: u32,
+            response: *mut u32,
+            wait: i32,
+        ) -> i32;
+    }
+    const MB_OK: u32 = 0x0;
+    const MB_ICONWARNING: u32 = 0x30;
+    const MB_TOPMOST: u32 = 0x0004_0000;
+
+    let session = unsafe { WTSGetActiveConsoleSessionId() };
+    if session == u32::MAX {
+        return false;
+    }
+    let wide = |s: &str| -> Vec<u16> {
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
+    let title = wide(caption);
+    let msg = wide(text);
+    let mut resp: u32 = 0;
+    let ok = unsafe {
+        WTSSendMessageW(
+            std::ptr::null_mut(),
+            session,
+            title.as_ptr(),
+            (title.len().saturating_sub(1) * 2) as u32,
+            msg.as_ptr(),
+            (msg.len().saturating_sub(1) * 2) as u32,
+            MB_OK | MB_ICONWARNING | MB_TOPMOST,
+            0,
+            &mut resp,
+            0,
+        )
+    };
+    ok != 0
 }
 
 /// 在交互式桌面弹一个提醒框（服务在 session 0，用 MB_SERVICE_NOTIFICATION）
@@ -285,8 +379,7 @@ fn message_box(caption: &str, text: &str) {
         fn GetCurrentProcessId() -> u32;
         fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> i32;
     }
-    // 只有 session 0 的服务才需要 MB_SERVICE_NOTIFICATION；
-    // 普通进程（--demo-popups）用它会让窗口挂到 csrss 名下，关不掉。
+    // 只有 session 0 的服务才需要特殊处理。
     let mut sid: u32 = 0;
     let ok = unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut sid) } != 0;
     let service_flag = if ok && sid == 0 {
@@ -294,6 +387,10 @@ fn message_box(caption: &str, text: &str) {
     } else {
         0
     };
+    // 服务优先用 WTS 直接发到当前登录会话（比 MB_SERVICE_NOTIFICATION 更可靠）
+    if ok && sid == 0 && wts_message(caption, text) {
+        return;
+    }
 
     let wide = |s: &str| -> Vec<u16> {
         OsStr::new(s)
@@ -310,5 +407,64 @@ fn message_box(caption: &str, text: &str) {
             caption_w.as_ptr(),
             MB_OK | MB_ICONWARNING | service_flag,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data(balance: f64, left_mb: f64) -> BillingData {
+        BillingData {
+            balance_yuan: balance,
+            used_mb: 10.0,
+            left_mb,
+            used_time_min: 0,
+            package_price_yuan: Some(20.0),
+            fetched_epoch: 0,
+        }
+    }
+
+    fn cfg() -> Config {
+        let mut c = Config::default();
+        c.billing_auto_check = true;
+        c.billing_flow_alert_mb = 1024;
+        c
+    }
+
+    #[test]
+    fn flow_alert_fires_when_below_threshold() {
+        let lines = alert_lines(&cfg(), &data(100.0, 512.0), true);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("剩余流量"));
+    }
+
+    #[test]
+    fn flow_only_offline_skips_when_online() {
+        let mut c = cfg();
+        c.billing_flow_only_offline = true;
+        c.billing_balance_alert = false;
+        assert!(alert_lines(&c, &data(100.0, 512.0), true).is_empty());
+        assert_eq!(alert_lines(&c, &data(100.0, 512.0), false).len(), 1);
+    }
+
+    #[test]
+    fn balance_alert_respects_price_and_switch() {
+        let c = cfg();
+        // 余额 15 < 套餐 20
+        assert_eq!(alert_lines(&c, &data(15.0, 99999.0), true).len(), 1);
+        // 关闭余额提醒
+        let mut off = cfg();
+        off.billing_balance_alert = false;
+        assert!(alert_lines(&off, &data(15.0, 99999.0), true).is_empty());
+    }
+
+    #[test]
+    fn balance_only_offline_skips_when_online() {
+        let mut c = cfg();
+        c.billing_balance_only_offline = true;
+        c.billing_flow_alert = false;
+        assert!(alert_lines(&c, &data(15.0, 0.0), true).is_empty());
+        assert_eq!(alert_lines(&c, &data(15.0, 0.0), false).len(), 1);
     }
 }

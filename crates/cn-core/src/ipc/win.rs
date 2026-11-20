@@ -59,7 +59,10 @@ fn io_err(op: &str) -> std::io::Error {
     let code = std::io::Error::last_os_error();
     std::io::Error::new(
         code.kind(),
-        format!("{op}失败: {code}（Win32 {}）", code.raw_os_error().unwrap_or(0)),
+        format!(
+            "{op}失败: {code}（Win32 {}）",
+            code.raw_os_error().unwrap_or(0)
+        ),
     )
 }
 
@@ -135,6 +138,32 @@ pub fn flush(handle: HANDLE) {
     }
 }
 
+/// 取命名管道客户端进程的 exe 路径（用于限制写命令只能由本目录的面板发）
+pub fn client_exe_path(handle: HANDLE) -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let mut pid: u32 = 0;
+    unsafe {
+        GetNamedPipeClientProcessId(handle, &mut pid).ok()?;
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let r = QueryFullProcessImageNameW(
+            h,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = CloseHandle(h);
+        r.ok()?;
+        let s = String::from_utf16_lossy(&buf[..len as usize]);
+        Some(std::path::PathBuf::from(s))
+    }
+}
+
 pub fn close(handle: HANDLE) {
     unsafe {
         let _ = CloseHandle(handle);
@@ -167,9 +196,7 @@ pub fn connect(timeout: Duration) -> std::io::Result<HANDLE> {
         match r {
             Ok(h) if !h.is_invalid() => return Ok(h),
             _ => {
-                let code = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(0) as u32;
+                let code = std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32;
                 if code != ERROR_PIPE_BUSY {
                     // 最常见的是 2（服务没运行）
                     return Err(io_err("连接服务管道"));
@@ -280,5 +307,3 @@ pub fn read_frame(h: HANDLE) -> std::io::Result<Option<Vec<u8>>> {
     read_exact(h, &mut buf)?;
     Ok(Some(buf))
 }
-
-

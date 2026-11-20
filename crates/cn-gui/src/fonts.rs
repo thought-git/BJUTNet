@@ -19,7 +19,11 @@ pub fn setup(ctx: &egui::Context) {
                 std::sync::Arc::new(egui::FontData::from_owned(bytes)),
             );
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                fonts.families.entry(family).or_default().push("cjk".to_owned());
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .push("cjk".to_owned());
             }
             break;
         }
@@ -31,19 +35,21 @@ pub fn setup(ctx: &egui::Context) {
 /// 用仓库里的 `assets/icon.ico` 做窗口图标（与 exe 图标同一张图）
 pub fn window_icon() -> egui::IconData {
     static ICO: &[u8] = include_bytes!("../../../assets/icon.ico");
-    if let Some((rgba, w, h)) = decode_ico(ICO) {
+    if let Some((rgba, w, h)) = decode_ico(ICO, 32) {
         return scale_to_icon(&rgba, w, h, 32);
     }
     fallback_icon()
 }
 
-fn decode_ico(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+fn decode_ico(bytes: &[u8], target: u32) -> Option<(Vec<u8>, u32, u32)> {
     let dir = ico::IconDir::read(std::io::Cursor::new(bytes)).ok()?;
-    // 取最大的一张，再缩到 32×32（标题栏/任务栏用）
+    // 优先取"刚好够用"的尺寸（有 32 就直接用 32，避免拿 256 缩小导致发糊）
     let entry = dir
         .entries()
         .iter()
-        .max_by_key(|e| e.width() * e.height())?;
+        .filter(|e| e.width() >= target && e.height() >= target)
+        .min_by_key(|e| e.width() * e.height())
+        .or_else(|| dir.entries().iter().max_by_key(|e| e.width() * e.height()))?;
     let img = entry.decode().ok()?;
     Some((img.rgba_data().to_vec(), img.width(), img.height()))
 }
@@ -95,5 +101,9 @@ fn fallback_icon() -> egui::IconData {
             }
         }
     }
-    egui::IconData { rgba, width: size, height: size }
+    egui::IconData {
+        rgba,
+        width: size,
+        height: size,
+    }
 }

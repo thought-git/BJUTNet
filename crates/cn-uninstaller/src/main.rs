@@ -32,10 +32,16 @@ fn main() {
                 if std::fs::copy(&me, &copy).is_ok() {
                     let mut c = std::process::Command::new(&copy);
                     c.arg("--quiet")
-                        .arg("--cleanup-dir").arg(&dir)
-                        .arg("--wait-pid").arg(pid.to_string());
-                    if purge_data { c.arg("--purge-data"); }
-                    if c.spawn().is_ok() { std::process::exit(0); }
+                        .arg("--cleanup-dir")
+                        .arg(&dir)
+                        .arg("--wait-pid")
+                        .arg(pid.to_string());
+                    if purge_data {
+                        c.arg("--purge-data");
+                    }
+                    if c.spawn().is_ok() {
+                        std::process::exit(0);
+                    }
                 }
             }
         }
@@ -84,10 +90,7 @@ fn main() {
 
     // 自己就在安装目录里 → 复制到 %TEMP% 再跑（否则删不掉自己）
     if self_exe.starts_with(&install_dir) {
-        let tmp = std::env::temp_dir().join(format!(
-            "BJUTNetUninstall_{}.exe",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("BJUTNetUninstall_{}.exe", std::process::id()));
         if std::fs::copy(&self_exe, &tmp).is_ok() {
             let mut cmd = std::process::Command::new(&tmp);
             cmd.arg("--quiet")
@@ -190,7 +193,11 @@ fn cleanup(install_dir: &Path, purge_data: bool, quiet: bool) -> i32 {
             "卸载 BJUTNet",
         );
     }
-    if ok { 0 } else { 2 }
+    if ok {
+        0
+    } else {
+        2
+    }
 }
 
 fn say(quiet: bool, line: &str) {

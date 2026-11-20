@@ -88,7 +88,9 @@ pub fn load(path: &Path) -> std::io::Result<Option<Credentials>> {
         Err(e) => return Err(e),
     };
     if bytes.len() <= MAGIC.len() || &bytes[..MAGIC.len()] != MAGIC {
-        return Err(std::io::Error::other("secrets.dat 格式不对（magic 不匹配）"));
+        return Err(std::io::Error::other(
+            "secrets.dat 格式不对（magic 不匹配）",
+        ));
     }
     let mut plain = unprotect(&bytes[MAGIC.len()..])?;
     let creds = serde_json::from_slice::<Credentials>(&plain)
@@ -114,8 +116,16 @@ fn protect(data: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut out = CRYPT_INTEGER_BLOB::default();
 
     unsafe {
-        CryptProtectData(&input, w!("CampusNet"), Some(&ent_blob), None, None, 0, &mut out)
-            .map_err(|e| std::io::Error::other(format!("CryptProtectData 失败: {e}")))?;
+        CryptProtectData(
+            &input,
+            w!("CampusNet"),
+            Some(&ent_blob),
+            None,
+            None,
+            0,
+            &mut out,
+        )
+        .map_err(|e| std::io::Error::other(format!("CryptProtectData 失败: {e}")))?;
         let result = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
         let _ = LocalFree(Some(HLOCAL(out.pbData as *mut core::ffi::c_void)));
         Ok(result)
@@ -135,11 +145,13 @@ fn unprotect(blob: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut out = CRYPT_INTEGER_BLOB::default();
 
     unsafe {
-        CryptUnprotectData(&input, None, Some(&ent_blob), None, None, 0, &mut out).map_err(|e| {
-            std::io::Error::other(format!(
-                "CryptUnprotectData 失败（换机器/换服务账户/文件损坏都会这样）: {e}"
-            ))
-        })?;
+        CryptUnprotectData(&input, None, Some(&ent_blob), None, None, 0, &mut out).map_err(
+            |e| {
+                std::io::Error::other(format!(
+                    "CryptUnprotectData 失败（换机器/换服务账户/文件损坏都会这样）: {e}"
+                ))
+            },
+        )?;
         let result = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
         let _ = LocalFree(Some(HLOCAL(out.pbData as *mut core::ffi::c_void)));
         Ok(result)

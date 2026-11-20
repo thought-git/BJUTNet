@@ -11,9 +11,9 @@
 //! - `wlan`    WLAN SSID
 //! - `http`    HTTP 探活（generate_204）
 
+pub mod app;
 pub mod billing;
 pub mod config;
-pub mod app;
 pub mod http;
 pub mod ipc;
 pub mod logging;
@@ -23,9 +23,9 @@ pub mod portal;
 pub mod secret;
 pub mod shell;
 pub mod svcctl;
-pub mod winreg;
 pub mod util;
 pub mod version;
+pub mod winreg;
 pub mod wlan;
 
 pub use version::VERSION;

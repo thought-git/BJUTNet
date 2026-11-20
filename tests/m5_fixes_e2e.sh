@@ -89,7 +89,7 @@ cat /tmp/m5-icons.txt | sed 's/^/  /'
 
 echo "== 3. 用户标记的校园网优先于门户探测 =="
 write_cfg "$TMP/trusted" '["http://127.0.0.1:18080/204"]' "http://127.0.0.1:9" "http://127.0.0.1:9" \
-  '[{"kind":"dorm","name":"我的宿舍网","ssid":"","gateway":"","subnet":"10.126.64.0/19"}]'
+  '[{"kind":"dorm","name":"我的宿舍网","ssid":"","gateway":"","subnet":"0.0.0.0/0"}]'
 "$EXE" --probe --data "$(cygpath -m "$TMP/trusted")" >/tmp/m5-probe2.txt 2>&1
 check "两个门户都不可达仍判宿舍网络" "yes" "$(contains /tmp/m5-probe2.txt "结果     : 宿舍网络")"
 check "依据写明用户标记" "yes" "$(contains /tmp/m5-probe2.txt "用户标记")"

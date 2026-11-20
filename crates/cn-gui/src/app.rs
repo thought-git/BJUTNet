@@ -87,13 +87,26 @@ pub struct App {
     billing_captcha: Option<egui::TextureHandle>,
     billing_captcha_img: Option<egui::ColorImage>,
     billing_code: String,
+    billing_captcha_cmd: String,
     billing_error: String,
     billing_data: Option<BillingView>,
     billing_hide: bool,
     billing_auto: bool,
-    billing_popup_offline: bool,
+    billing_flow_only_offline: bool,
+    billing_flow_alert: bool,
     billing_flow_alert_mb: u64,
+    billing_balance_alert: bool,
+    billing_balance_only_offline: bool,
     billing_confirm_auto: bool,
+    confirm_reset_settings: bool,
+    confirm_reset_billing: bool,
+    billing_unsupported: bool,
+    /// 服务端版本与面板不一致（常见于只换了面板/只换了服务）
+    svc_version_mismatch: bool,
+    // 本月停用
+    month_off: bool,
+    month_off_until_epoch: i64,
+    cfg_req_at: Option<Instant>,
 
     // 关于页
     diag_text: Option<String>,
@@ -134,13 +147,24 @@ impl App {
             billing_captcha: None,
             billing_captcha_img: None,
             billing_code: String::new(),
+            billing_captcha_cmd: "billing_refresh".into(),
             billing_error: String::new(),
             billing_data: None,
             billing_hide: false,
             billing_auto: false,
-            billing_popup_offline: false,
-            billing_flow_alert_mb: 0,
+            billing_flow_only_offline: false,
+            billing_flow_alert: true,
+            billing_flow_alert_mb: 512,
+            billing_balance_alert: true,
+            billing_balance_only_offline: false,
             billing_confirm_auto: false,
+            confirm_reset_settings: false,
+            confirm_reset_billing: false,
+            billing_unsupported: false,
+            svc_version_mismatch: false,
+            month_off: false,
+            month_off_until_epoch: 0,
+            cfg_req_at: None,
             diag_text: None,
             toast: None,
             confirm_stop: false,
@@ -156,22 +180,47 @@ impl App {
         if self.cfg_loaded {
             return;
         }
-        if let Some(cfg) = Config::load_existing(&paths::config_path()) {
-            self.account = cfg.account.clone();
-            self.check_interval = cfg.check_interval_sec;
-            self.offline_interval = cfg.offline_interval_sec;
-            self.probe_timeout = cfg.probe_timeout_sec;
-            self.log_level = cfg.log_level.clone();
-            self.auto_wifi = cfg.auto_connect_wifi;
-            self.wifi_profile = cfg.wifi_profile.clone();
-            self.cfg_loaded = true;
+        let now = Instant::now();
+        if let Some(at) = self.cfg_req_at {
+            if now.duration_since(at) < Duration::from_secs(2) {
+                return;
+            }
         }
+        self.cfg_req_at = Some(now);
+        // 配置以服务为准（服务写的是 SYSTEM 权限的文件，面板直接读文件可能失败）
+        self.bridge.send("get_config", json!({}), "config");
+    }
+
+    /// 老服务没有 get_config 时，退回读本地配置文件（只显示，不一定能保存新字段）
+    fn apply_config_file(&mut self) -> bool {
+        let Some(cfg) = Config::load_existing(&paths::config_path()) else {
+            return false;
+        };
+        self.account = cfg.account.clone();
+        self.check_interval = cfg.check_interval_sec;
+        self.offline_interval = cfg.offline_interval_sec;
+        self.probe_timeout = cfg.probe_timeout_sec;
+        self.log_level = cfg.log_level.clone();
+        self.auto_wifi = cfg.auto_connect_wifi;
+        self.wifi_profile = cfg.wifi_profile.clone();
+        self.billing_auto = cfg.billing_auto_check;
+        self.billing_hide = cfg.billing_hide_amount;
+        self.billing_flow_alert = cfg.billing_flow_alert;
+        self.billing_flow_alert_mb = cfg.billing_flow_alert_mb;
+        self.billing_flow_only_offline = cfg.billing_flow_only_offline;
+        self.billing_balance_alert = cfg.billing_balance_alert;
+        self.billing_balance_only_offline = cfg.billing_balance_only_offline;
+        self.month_off = cfg.no_connect_until_epoch > chrono::Local::now().timestamp();
+        self.month_off_until_epoch = cfg.no_connect_until_epoch;
+        self.cfg_loaded = true;
+        true
     }
 
     fn drain_events(&mut self) {
         while let Ok(ev) = self.bridge.rx.try_recv() {
             match ev {
                 UiEvent::Status(Ok(st)) => {
+                    self.svc_version_mismatch = st.svc_version != cn_core::version::full();
                     self.status = Some(st);
                     self.status_err.clear();
                     self.ensure_cfg_loaded();
@@ -185,12 +234,66 @@ impl App {
                         if label.starts_with("billing") {
                             self.billing_loading = false;
                             self.billing_error = resp.error.clone();
+                            self.billing_loaded = false;
                         }
                         self.toast(format!("{label} 失败: {}", resp.error), true);
                     } else {
                         match label {
+                            "config" => {
+                                let d = &resp.data;
+                                let s = |k: &str| {
+                                    d.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+                                };
+                                let n = |k: &str| d.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                                let b =
+                                    |k: &str| d.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+                                self.account = s("account");
+                                if n("checkIntervalSec") > 0 {
+                                    self.check_interval = n("checkIntervalSec");
+                                }
+                                if n("offlineIntervalSec") > 0 {
+                                    self.offline_interval = n("offlineIntervalSec");
+                                }
+                                if n("probeTimeoutSec") > 0 {
+                                    self.probe_timeout = n("probeTimeoutSec");
+                                }
+                                if !s("logLevel").is_empty() {
+                                    self.log_level = s("logLevel");
+                                }
+                                self.auto_wifi = b("autoConnectWifi");
+                                if !s("wifiProfile").is_empty() {
+                                    self.wifi_profile = s("wifiProfile");
+                                }
+                                self.billing_auto = b("billingAutoCheck");
+                                self.billing_hide = b("billingHideAmount");
+                                self.billing_flow_alert = b("billingFlowAlert");
+                                self.billing_flow_alert_mb = n("billingFlowAlertMb");
+                                self.billing_flow_only_offline = b("billingFlowOnlyOffline");
+                                self.billing_balance_alert = b("billingBalanceAlert");
+                                self.billing_balance_only_offline = b("billingBalanceOnlyOffline");
+                                self.month_off = b("monthOff");
+                                self.month_off_until_epoch = d
+                                    .get("monthOffUntilEpoch")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
+                                self.cfg_loaded = true;
+                            }
+                            "reset_settings" | "reset_billing" => {
+                                self.confirm_reset_settings = false;
+                                self.confirm_reset_billing = false;
+                                self.cfg_loaded = false;
+                                self.billing_loaded = false;
+                                self.billing_unsupported = false;
+                                self.toast("已恢复默认设置", false);
+                            }
+                            "options" => {
+                                // 保存后重新从服务读一遍，避免界面和服务不一致
+                                self.cfg_loaded = false;
+                                self.toast("已保存", false);
+                            }
                             "logs" => {
-                                if let Some(arr) = resp.data.get("lines").and_then(|v| v.as_array()) {
+                                if let Some(arr) = resp.data.get("lines").and_then(|v| v.as_array())
+                                {
                                     self.log_lines = arr
                                         .iter()
                                         .map(|v| v.as_str().unwrap_or("").to_string())
@@ -209,15 +312,13 @@ impl App {
                                     .get("added")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false);
-                                let msg = resp
-                                    .data
-                                    .get("msg")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(if added {
+                                let msg = resp.data.get("msg").and_then(|v| v.as_str()).unwrap_or(
+                                    if added {
                                         "已加入标记列表，服务会立刻按校园网重新判别"
                                     } else {
                                         "这张网络已经在标记列表里了"
-                                    });
+                                    },
+                                );
                                 self.toast(msg.to_string(), false);
                             }
                             "verify_login" => {
@@ -227,12 +328,11 @@ impl App {
                                 self.toast("已移除该标记", false);
                             }
                             "credentials" => {
+                                self.password.clear();
+                                self.password_visible = false;
                                 self.cfg_loaded = false; // 重新拉一次配置
-                                let online = self
-                                    .status
-                                    .as_ref()
-                                    .map(|s| s.online)
-                                    .unwrap_or(false);
+                                let online =
+                                    self.status.as_ref().map(|s| s.online).unwrap_or(false);
                                 if online {
                                     self.toast(
                                         "已保存。当前在线，密码要等掉线才会验证；想立刻确认请点「重连并验证」",
@@ -242,19 +342,44 @@ impl App {
                                     self.toast("已保存，服务正在用新密码登录，稍等看状态页", false);
                                 }
                             }
-                            "billing_status" | "billing_refresh" => {
+                            "billing_status" | "billing_refresh" | "billing_check" => {
                                 self.billing_loading = false;
-                                if let Some(v) = resp.data.get("hide_amount").and_then(|v| v.as_bool()) {
+                                if let Some(v) =
+                                    resp.data.get("hide_amount").and_then(|v| v.as_bool())
+                                {
                                     self.billing_hide = v;
                                 }
-                                if let Some(v) = resp.data.get("auto_check").and_then(|v| v.as_bool()) {
+                                if let Some(v) =
+                                    resp.data.get("auto_check").and_then(|v| v.as_bool())
+                                {
                                     self.billing_auto = v;
                                 }
-                                if let Some(v) = resp.data.get("popup_only_offline").and_then(|v| v.as_bool()) {
-                                    self.billing_popup_offline = v;
+                                if let Some(v) =
+                                    resp.data.get("flow_alert").and_then(|v| v.as_bool())
+                                {
+                                    self.billing_flow_alert = v;
                                 }
-                                if let Some(v) = resp.data.get("flow_alert_mb").and_then(|v| v.as_u64()) {
+                                if let Some(v) =
+                                    resp.data.get("flow_alert_mb").and_then(|v| v.as_u64())
+                                {
                                     self.billing_flow_alert_mb = v;
+                                }
+                                if let Some(v) =
+                                    resp.data.get("flow_only_offline").and_then(|v| v.as_bool())
+                                {
+                                    self.billing_flow_only_offline = v;
+                                }
+                                if let Some(v) =
+                                    resp.data.get("balance_alert").and_then(|v| v.as_bool())
+                                {
+                                    self.billing_balance_alert = v;
+                                }
+                                if let Some(v) = resp
+                                    .data
+                                    .get("balance_only_offline")
+                                    .and_then(|v| v.as_bool())
+                                {
+                                    self.billing_balance_only_offline = v;
                                 }
                                 let need = resp
                                     .data
@@ -269,8 +394,8 @@ impl App {
                                         resp.data.get("captcha_png").and_then(|v| v.as_str())
                                     {
                                         use base64::Engine;
-                                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD
-                                            .decode(b64)
+                                        if let Ok(bytes) =
+                                            base64::engine::general_purpose::STANDARD.decode(b64)
                                         {
                                             if let Ok(img) = image::load_from_memory(&bytes) {
                                                 let rgba = img.to_rgba8();
@@ -283,6 +408,7 @@ impl App {
                                             }
                                         }
                                     }
+                                    self.billing_captcha_cmd = label.to_string();
                                     self.billing_code.clear();
                                     self.toast("需要验证码：按图片输入后提交", false);
                                 } else {
@@ -294,7 +420,20 @@ impl App {
                                             self.billing_error.clear();
                                         }
                                     }
-                                    if resp.data.get("data").is_some() {
+                                    if label == "billing_check" {
+                                        if resp
+                                            .data
+                                            .get("popped")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false)
+                                        {
+                                            self.toast("条件命中，已弹出提醒", false);
+                                        } else if let Some(reason) =
+                                            resp.data.get("reason").and_then(|v| v.as_str())
+                                        {
+                                            self.toast(reason.to_string(), false);
+                                        }
+                                    } else if resp.data.get("data").is_some() {
                                         self.toast("计费信息已更新", false);
                                     }
                                 }
@@ -311,7 +450,43 @@ impl App {
                     }
                 }
                 UiEvent::Action(Err(e), label) => {
-                    self.toast(format!("{label} 失败: {e}"), true);
+                    if label.starts_with("billing") {
+                        self.billing_loading = false;
+                        if e.contains("未知命令") {
+                            self.billing_unsupported = true;
+                            self.billing_loaded = true;
+                            self.billing_error =
+                                "服务端版本过旧，不支持计费功能；请安装新版服务。".into();
+                        } else {
+                            self.billing_error = e.clone();
+                            self.billing_loaded = false;
+                        }
+                    }
+                    if label == "config" {
+                        if e.contains("未知命令") {
+                            if self.apply_config_file() {
+                                self.toast(
+                                    "服务端版本过旧（没有 get_config），已从本地配置读取；请安装新版服务",
+                                    true,
+                                );
+                            } else {
+                                self.cfg_loaded = true;
+                                self.toast("服务端版本过旧，无法读取配置；请安装新版服务", true);
+                            }
+                            // 不再每 2 秒重试
+                            self.cfg_req_at = Some(Instant::now() + Duration::from_secs(3600));
+                        } else {
+                            // 服务没起来/管道断了：2 秒后再试，不弹错误（状态栏已提示未连接）
+                            self.cfg_req_at = Some(Instant::now());
+                        }
+                    } else if label == "options" && e.contains("没有可保存的选项字段") {
+                        self.toast(
+                            "服务端版本过旧，该设置需要新版服务才能保存；请安装 1.3.0 服务",
+                            true,
+                        );
+                    } else {
+                        self.toast(format!("{label} 失败: {e}"), true);
+                    }
                 }
             }
         }
@@ -323,12 +498,28 @@ impl App {
                 let (r, g, b) = st.state_color();
                 (
                     egui::Color32::from_rgb(r, g, b),
-                    format!(
-                        "{} · {} · {}",
-                        st.state,
-                        st.net_kind,
-                        if st.online { "出网正常" } else { "出网异常" }
-                    ),
+                    if st.state.contains("无网络") {
+                        format!(
+                            "{} · {}",
+                            st.state,
+                            if st.online {
+                                "出网正常"
+                            } else {
+                                "出网异常"
+                            }
+                        )
+                    } else {
+                        format!(
+                            "{} · {} · {}",
+                            st.state,
+                            st.net_kind,
+                            if st.online {
+                                "出网正常"
+                            } else {
+                                "出网异常"
+                            }
+                        )
+                    },
                 )
             }
             None => (
@@ -401,17 +592,28 @@ impl App {
                     ui.end_row();
                 };
                 row("状态", st.state.clone());
-                row("网络", st.net_kind.clone());
+                row(
+                    "网络",
+                    if st.state.contains("无网络") {
+                        "无网络".into()
+                    } else {
+                        st.net_kind.clone()
+                    },
+                );
                 // 网络类型（协议）与接入介质（有线/无线）是两回事：
                 // 宿舍网、公共网都可能走有线或无线，这里单独显示介质。
-                let medium = if st.wireless || !st.ssid.is_empty() { "无线" } else { "有线" };
+                let medium = if st.wireless || !st.ssid.is_empty() {
+                    "无线"
+                } else {
+                    "有线"
+                };
                 row(
                     "接入",
                     match (st.ssid.is_empty(), st.iface.is_empty()) {
                         (false, false) => format!("{medium}（{}，SSID {}）", st.iface, st.ssid),
                         (false, true) => format!("{medium}（SSID {}）", st.ssid),
                         (true, false) => format!("{medium}（{}）", st.iface),
-                        (true, true) => medium.into(),
+                        (true, true) => "-".into(),
                     },
                 );
                 row(
@@ -422,11 +624,46 @@ impl App {
                         st.net_evidence.clone()
                     },
                 );
-                row("SSID", if st.ssid.is_empty() { "-".into() } else { st.ssid.clone() });
-                row("本机 IP", if st.ip.is_empty() { "-".into() } else { st.ip.clone() });
-                row("网关", if st.gateway.is_empty() { "-".into() } else { st.gateway.clone() });
-                row("MAC", if st.mac.is_empty() { "-".into() } else { st.mac.clone() });
-                row("账号", if st.account.is_empty() { "<未配置>".into() } else { st.account.clone() });
+                row(
+                    "SSID",
+                    if st.ssid.is_empty() {
+                        "-".into()
+                    } else {
+                        st.ssid.clone()
+                    },
+                );
+                row(
+                    "本机 IP",
+                    if st.ip.is_empty() {
+                        "-".into()
+                    } else {
+                        st.ip.clone()
+                    },
+                );
+                row(
+                    "网关",
+                    if st.gateway.is_empty() {
+                        "-".into()
+                    } else {
+                        st.gateway.clone()
+                    },
+                );
+                row(
+                    "MAC",
+                    if st.mac.is_empty() {
+                        "-".into()
+                    } else {
+                        st.mac.clone()
+                    },
+                );
+                row(
+                    "账号",
+                    if st.account.is_empty() {
+                        "<未配置>".into()
+                    } else {
+                        st.account.clone()
+                    },
+                );
                 row(
                     "最近成功",
                     if st.last_ok_epoch > 0 {
@@ -442,6 +679,19 @@ impl App {
                     },
                 );
                 row("运行时长", format_duration(st.uptime_sec));
+                if st.month_off {
+                    row(
+                        "本月停用",
+                        chrono::DateTime::from_timestamp(st.month_off_until_epoch, 0)
+                            .map(|d| {
+                                format!(
+                                    "已停用自动连接（到 {}）",
+                                    d.with_timezone(&chrono::Local).format("%Y-%m-%d")
+                                )
+                            })
+                            .unwrap_or_else(|| "已停用自动连接".into()),
+                    );
+                }
                 row(
                     "暂停",
                     if st.paused_forever {
@@ -449,10 +699,7 @@ impl App {
                     } else if st.paused_until_epoch > 0 {
                         chrono::DateTime::from_timestamp(st.paused_until_epoch, 0)
                             .map(|t| {
-                                format!(
-                                    "到 {}",
-                                    t.with_timezone(&chrono::Local).format("%H:%M:%S")
-                                )
+                                format!("到 {}", t.with_timezone(&chrono::Local).format("%H:%M:%S"))
                             })
                             .unwrap_or_else(|| "-".into())
                     } else {
@@ -495,15 +742,21 @@ impl App {
             if ui.button("暂停 2 小时").clicked() {
                 self.bridge.send("pause", json!({"minutes": 120}), "pause");
             }
-            if ui.button("暂停直到恢复").on_hover_text(
-                "不会自动恢复：点「恢复自动登录」或重启服务才解除",
-            ).clicked() {
+            if ui
+                .button("暂停直到恢复")
+                .on_hover_text("不会自动恢复：点「恢复自动登录」或重启服务才解除")
+                .clicked()
+            {
                 self.bridge.send("pause", json!({"forever": true}), "pause");
             }
             ui.separator();
-            if ui.button("关闭服务").on_hover_text(
-                "结束服务进程（本次运行）。服务启动类型仍是「自动」，下次开机会自己起来",
-            ).clicked() {
+            if ui
+                .button("关闭服务")
+                .on_hover_text(
+                    "结束服务进程（本次运行）。服务启动类型仍是「自动」，下次开机会自己起来",
+                )
+                .clicked()
+            {
                 self.confirm_stop = true;
             }
         });
@@ -525,11 +778,19 @@ impl App {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label("识别不准？把当前网络标记为校园网：");
-            if ui.button("宿舍网").on_hover_text("有线 / 无线都适用：按门户协议区分，不看接入介质").clicked() {
+            if ui
+                .button("宿舍网")
+                .on_hover_text("有线 / 无线都适用：按门户协议区分，不看接入介质")
+                .clicked()
+            {
                 self.bridge
                     .send("add_trusted_current", json!({"kind": "dorm"}), "trusted");
             }
-            if ui.button("公共网").on_hover_text("有线 / 无线都适用：按门户协议区分，不看接入介质").clicked() {
+            if ui
+                .button("公共网")
+                .on_hover_text("有线 / 无线都适用：按门户协议区分，不看接入介质")
+                .clicked()
+            {
                 self.bridge
                     .send("add_trusted_current", json!({"kind": "public"}), "trusted");
             }
@@ -582,6 +843,14 @@ impl App {
                 });
                 ui.end_row();
             });
+
+        if self.status.as_ref().map(|s| s.configured).unwrap_or(false) {
+            ui.label(
+                egui::RichText::new("已保存学号密码（密码不会显示）")
+                    .weak()
+                    .small(),
+            );
+        }
 
         ui.horizontal(|ui| {
             if ui.button("保存并测试登录").clicked() {
@@ -637,9 +906,7 @@ impl App {
                 ui.end_row();
 
                 ui.label("校园 WiFi 名称");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.wifi_profile).desired_width(200.0),
-                );
+                ui.add(egui::TextEdit::singleline(&mut self.wifi_profile).desired_width(200.0));
                 ui.end_row();
             });
 
@@ -662,14 +929,45 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(format!("{}. {}", i + 1, t.describe()));
                     if ui.button("删除").clicked() {
-                        self.bridge.send(
-                            "remove_trusted",
-                            json!({"index": i}),
-                            "trusted-remove",
-                        );
+                        self.bridge
+                            .send("remove_trusted", json!({"index": i}), "trusted-remove");
                     }
                 });
             }
+        }
+
+        ui.separator();
+        ui.heading("本月停用");
+        let mut month_off = self.month_off;
+        if ui
+            .checkbox(
+                &mut month_off,
+                "本月不再自动连接校园网（流量用尽时避免超额）",
+            )
+            .changed()
+        {
+            self.month_off = month_off;
+            self.bridge
+                .send("set_options", json!({ "monthOff": month_off }), "options");
+        }
+        ui.label(
+            egui::RichText::new(
+                "开启后掉线不再自动登录，直到下月 1 日自动恢复；当前已连的会话不会主动断开；「立即重连」可手动连一次。",
+            )
+            .weak()
+            .small(),
+        );
+        if self.month_off && self.month_off_until_epoch > 0 {
+            ui.label(
+                chrono::DateTime::from_timestamp(self.month_off_until_epoch, 0)
+                    .map(|d| {
+                        format!(
+                            "恢复时间：{}",
+                            d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
+                        )
+                    })
+                    .unwrap_or_default(),
+            );
         }
 
         ui.horizontal(|ui| {
@@ -687,23 +985,58 @@ impl App {
                     "options",
                 );
             }
+            if ui.button("恢复默认设置").clicked() {
+                self.confirm_reset_settings = true;
+            }
         });
+        if self.confirm_reset_settings {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 140, 0),
+                "恢复默认会重置运行参数（探测间隔、超时、日志级别、WiFi、本月停用等），不影响账号密码和标记网络。",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("确认恢复").clicked() {
+                    self.confirm_reset_settings = false;
+                    self.bridge.send(
+                        "reset_options",
+                        json!({ "scope": "settings" }),
+                        "reset_settings",
+                    );
+                }
+                if ui.button("取消").clicked() {
+                    self.confirm_reset_settings = false;
+                }
+            });
+        }
     }
-
 
     fn billing_tab(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.heading("计费（只读）");
+        if self.billing_unsupported {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 140, 0),
+                "当前服务端版本过旧，不支持计费功能；请安装新版后使用。",
+            );
+            return;
+        }
         ui.horizontal(|ui| {
             if ui.button("刷新").clicked() {
                 self.billing_loading = true;
                 self.billing_error.clear();
-                self.bridge.send("billing_refresh", json!({}), "billing_refresh");
+                self.bridge
+                    .send("billing_refresh", json!({}), "billing_refresh");
+            }
+            if ui.button("立即检查并弹窗").clicked() {
+                self.billing_loading = true;
+                self.billing_error.clear();
+                self.bridge
+                    .send("billing_check_now", json!({}), "billing_check");
             }
             if ui.button("在浏览器打开").clicked() {
-                if let Err(e) = cn_core::shell::open_url(
-                    "https://jfself.bjut.edu.cn/Self/dashboard",
-                ) {
+                if let Err(e) =
+                    cn_core::shell::open_url("https://jfself.bjut.edu.cn/Self/dashboard")
+                {
                     self.toast(e, true);
                 }
             }
@@ -724,11 +1057,8 @@ impl App {
         if self.billing_need_captcha {
             ui.label("该站点要求验证码（连续登录失败会触发）。请输入图片中的字符：");
             if let Some(img) = self.billing_captcha_img.take() {
-                self.billing_captcha = Some(ctx.load_texture(
-                    "billing_captcha",
-                    img,
-                    egui::TextureOptions::NEAREST,
-                ));
+                self.billing_captcha =
+                    Some(ctx.load_texture("billing_captcha", img, egui::TextureOptions::NEAREST));
             }
             if let Some(tex) = &self.billing_captcha {
                 ui.add(egui::Image::new((tex.id(), egui::vec2(120.0, 40.0))));
@@ -742,11 +1072,17 @@ impl App {
                 if ui.button("提交").clicked() {
                     let code = self.billing_code.trim().to_string();
                     self.billing_loading = true;
-                    self.bridge.send(
-                        "billing_refresh",
-                        json!({ "code": code }),
-                        "billing_refresh",
-                    );
+                    let cmd = if self.billing_captcha_cmd == "billing_check" {
+                        "billing_check_now"
+                    } else {
+                        "billing_refresh"
+                    };
+                    let label = if cmd == "billing_check_now" {
+                        "billing_check"
+                    } else {
+                        "billing_refresh"
+                    };
+                    self.bridge.send(cmd, json!({ "code": code }), label);
                 }
             });
             ui.label(
@@ -760,9 +1096,11 @@ impl App {
                 self.billing_error.clone(),
             );
             ui.label(
-                egui::RichText::new("如果提示页面解析失败，可能是站点改版；请先点「在浏览器打开」确认页面正常。")
-                    .weak()
-                    .small(),
+                egui::RichText::new(
+                    "如果提示页面解析失败，可能是站点改版；请先点「在浏览器打开」确认页面正常。",
+                )
+                .weak()
+                .small(),
             );
         } else if let Some(d) = self.billing_data.clone() {
             egui::Grid::new("billing_grid")
@@ -846,26 +1184,10 @@ impl App {
                 "options",
             );
         }
-        ui.horizontal(|ui| {
-            ui.label("当月剩余流量低于");
-            let resp = ui.add(
-                egui::DragValue::new(&mut self.billing_flow_alert_mb)
-                    .range(0..=10_000_000)
-                    .speed(64)
-                    .suffix(" MB"),
-            );
-            ui.label("时提醒（0 = 关闭；1024 MB = 1 GB）");
-            if resp.changed() && !resp.dragged() {
-                self.bridge.send(
-                    "set_options",
-                    json!({ "billingFlowAlertMb": self.billing_flow_alert_mb }),
-                    "options",
-                );
-            }
-        });
+        // 主开关
         let mut auto = self.billing_auto;
         if ui
-            .checkbox(&mut auto, "开机自动查询余额（余额为 0 时弹窗）")
+            .checkbox(&mut auto, "开机自动查询（按下面勾选的条件弹窗提醒）")
             .changed()
         {
             if auto {
@@ -879,28 +1201,82 @@ impl App {
                 );
             }
         }
-        let mut offline = self.billing_popup_offline;
+
+        // 提醒 1：剩余流量低于阈值
+        ui.horizontal(|ui| {
+            ui.label("流量提醒：当月剩余低于");
+            let resp = ui.add(
+                egui::DragValue::new(&mut self.billing_flow_alert_mb)
+                    .range(0..=10_000_000)
+                    .speed(64)
+                    .suffix(" MB"),
+            );
+            ui.label("（0 = 关闭；1024 MB = 1 GB）");
+            // 拖动时每帧 changed，但 dragged=true；松手那帧 changed 可能已经是 false，
+            // 所以必须补上 drag_stopped / lost_focus，否则数值只改了界面、没落盘。
+            let should_save =
+                (resp.changed() && !resp.dragged()) || resp.drag_stopped() || resp.lost_focus();
+            if should_save {
+                self.bridge.send(
+                    "set_options",
+                    json!({ "billingFlowAlertMb": self.billing_flow_alert_mb }),
+                    "options",
+                );
+            }
+        });
+        ui.horizontal(|ui| {
+            let mut only = self.billing_flow_only_offline;
+            if ui
+                .add_enabled(
+                    self.billing_flow_alert_mb > 0,
+                    egui::Checkbox::new(&mut only, "流量提醒仅在无法出网时弹窗"),
+                )
+                .changed()
+            {
+                self.billing_flow_only_offline = only;
+                self.bridge.send(
+                    "set_options",
+                    json!({ "billingFlowOnlyOffline": only }),
+                    "options",
+                );
+            }
+        });
+
+        // 提醒 2：余额不足以支付套餐
+        let mut bal = self.billing_balance_alert;
         if ui
-            .add_enabled(
-                self.billing_auto,
-                egui::Checkbox::new(
-                    &mut offline,
-                    "可选：仅在无法出网时弹窗（对流量/余额两种提醒都生效）",
-                ),
-            )
+            .checkbox(&mut bal, "余额提醒：余额不足以支付当前套餐价时弹窗")
             .changed()
         {
-            self.billing_popup_offline = offline;
+            self.billing_balance_alert = bal;
             self.bridge.send(
                 "set_options",
-                json!({ "billingPopupOnlyOffline": offline }),
+                json!({ "billingBalanceAlert": bal }),
                 "options",
             );
         }
+        ui.horizontal(|ui| {
+            let mut only = self.billing_balance_only_offline;
+            if ui
+                .add_enabled(
+                    self.billing_balance_alert,
+                    egui::Checkbox::new(&mut only, "余额提醒仅在无法出网时弹窗"),
+                )
+                .changed()
+            {
+                self.billing_balance_only_offline = only;
+                self.bridge.send(
+                    "set_options",
+                    json!({ "billingBalanceOnlyOffline": only }),
+                    "options",
+                );
+            }
+        });
+
         if self.billing_confirm_auto {
             ui.colored_label(
                 egui::Color32::from_rgb(200, 140, 0),
-                "开启后，服务会在开机联网后用已保存的校园网密码登录计费系统查询一次（只读）；余额为 0 时弹窗提醒。",
+                "开启后，服务会在开机联网后用已保存的校园网密码登录计费系统查询一次（只读），按勾选条件弹窗提醒。",
             );
             ui.horizontal(|ui| {
                 if ui.button("确认开启").clicked() {
@@ -917,9 +1293,32 @@ impl App {
                 }
             });
         }
+        ui.add_space(6.0);
+        if ui.button("恢复默认计费设置").clicked() {
+            self.confirm_reset_billing = true;
+        }
+        if self.confirm_reset_billing {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 140, 0),
+                "恢复默认会关闭自动查询、清空流量阈值、重置两种提醒开关；不影响账号密码。",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("确认恢复").clicked() {
+                    self.confirm_reset_billing = false;
+                    self.bridge.send(
+                        "reset_options",
+                        json!({ "scope": "billing" }),
+                        "reset_billing",
+                    );
+                }
+                if ui.button("取消").clicked() {
+                    self.confirm_reset_billing = false;
+                }
+            });
+        }
         ui.label(
             egui::RichText::new(
-                "提示：连续登录失败后站点会要求验证码；服务自动查询遇到验证码会跳过，面板里可手动输入。",
+                "提示：开机自动查询只在服务启动时执行一次；开启后想立刻验证，点「立即检查并弹窗」。连续登录失败会要求验证码。",
             )
             .weak()
             .small(),
@@ -1011,6 +1410,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.drain_events();
+        self.ensure_cfg_loaded();
 
         // 日志页自动刷新
         if self.tab == Tab::Logs
@@ -1025,7 +1425,8 @@ impl eframe::App for App {
         if self.tab == Tab::Billing && !self.billing_loaded {
             self.billing_loaded = true;
             self.billing_loading = true;
-            self.bridge.send("billing_status", json!({}), "billing_status");
+            self.bridge
+                .send("billing_status", json!({}), "billing_status");
         }
 
         egui::Panel::top("top").show(ui, |ui| {
@@ -1033,6 +1434,18 @@ impl eframe::App for App {
             self.top_bar(ui);
             ui.add_space(4.0);
             self.tabs(ui);
+            if self.svc_version_mismatch {
+                if let Some(st) = &self.status {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 140, 0),
+                        format!(
+                            "服务端版本 {} 与面板 {} 不一致：新配置项可能不生效，请安装同一版本的完整包。",
+                            st.svc_version,
+                            cn_core::version::full()
+                        ),
+                    );
+                }
+            }
             ui.add_space(4.0);
         });
 

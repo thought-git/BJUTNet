@@ -52,15 +52,7 @@ pub fn write_uninstall(
 
     let set_sz = |name: &str, value: &str| -> Result<(), String> {
         let data = sz_bytes(value);
-        let rc = unsafe {
-            RegSetValueExW(
-                key,
-                &HSTRING::from(name),
-                None,
-                REG_SZ,
-                Some(&data),
-            )
-        };
+        let rc = unsafe { RegSetValueExW(key, &HSTRING::from(name), None, REG_SZ, Some(&data)) };
         if rc.is_ok() {
             Ok(())
         } else {
@@ -91,15 +83,8 @@ pub fn write_uninstall(
         // NoModify / NoRepair = 1
         for name in ["NoModify", "NoRepair"] {
             let data = 1u32.to_le_bytes();
-            let rc = unsafe {
-                RegSetValueExW(
-                    key,
-                    &HSTRING::from(name),
-                    None,
-                    REG_DWORD,
-                    Some(&data),
-                )
-            };
+            let rc =
+                unsafe { RegSetValueExW(key, &HSTRING::from(name), None, REG_DWORD, Some(&data)) };
             if !rc.is_ok() {
                 result = Err(format!("写注册表值 {name} 失败: {}", rc.0));
                 break;

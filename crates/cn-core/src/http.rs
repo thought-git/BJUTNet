@@ -11,8 +11,7 @@
 use std::io::Read;
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_UA: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampusNet/0.1";
+pub const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampusNet/0.1";
 
 /// 默认探测目标（与旧方案一致：两个不同厂商的 204）
 pub const PROBE_URLS: &[&str] = &[
@@ -37,7 +36,10 @@ impl ProbeReport {
     pub fn text(&self) -> String {
         match (self.status, self.error.is_empty()) {
             (Some(s), true) => format!("{} → {s} ({} ms)", self.url, self.elapsed_ms),
-            _ => format!("{} → 失败: {} ({} ms)", self.url, self.error, self.elapsed_ms),
+            _ => format!(
+                "{} → 失败: {} ({} ms)",
+                self.url, self.error, self.elapsed_ms
+            ),
         }
     }
 }
@@ -84,10 +86,7 @@ pub fn fetch(url: &str, timeout: Duration, headers: &[(&str, &str)]) -> FetchRes
     let read_body = |resp: ureq::Response, out: &mut FetchResult| {
         out.status = Some(resp.status());
         let mut buf = Vec::new();
-        let _ = resp
-            .into_reader()
-            .take(64 * 1024)
-            .read_to_end(&mut buf);
+        let _ = resp.into_reader().take(64 * 1024).read_to_end(&mut buf);
         out.body = String::from_utf8_lossy(&buf).to_string();
     };
 
@@ -148,7 +147,8 @@ impl Verdict {
 
 /// 是不是"内容型"探测点（返回固定文本，而不是 204 空响应）
 fn is_content_probe(url: &str) -> bool {
-    url.contains("msftconnecttest.com/connecttest.txt") || url.contains("captive.apple.com/hotspot-detect.html")
+    url.contains("msftconnecttest.com/connecttest.txt")
+        || url.contains("captive.apple.com/hotspot-detect.html")
 }
 
 /// 单条探测的判定。
@@ -200,7 +200,10 @@ pub fn internet_ok_quick(urls: &[&str], timeout: Duration) -> (Verdict, Vec<Prob
             return (Verdict::Online, reports);
         }
     }
-    let verdict = if reports.iter().any(|r| judge(&r.url, r) == Some(Verdict::Hijacked)) {
+    let verdict = if reports
+        .iter()
+        .any(|r| judge(&r.url, r) == Some(Verdict::Hijacked))
+    {
         Verdict::Hijacked
     } else {
         Verdict::Offline
@@ -260,13 +263,19 @@ mod tests {
         // 标准在线
         assert_eq!(judge(g, &probe(g, Some(204), "")), Some(Verdict::Online));
         // 204 却带内容 = 中间设备改写
-        assert_eq!(judge(g, &probe(g, Some(204), "hi")), Some(Verdict::Hijacked));
+        assert_eq!(
+            judge(g, &probe(g, Some(204), "hi")),
+            Some(Verdict::Hijacked)
+        );
         // 未登录被劫持成登录页（200 + 任意内容）→ 现在必须判劫持，不能再判在线
         assert_eq!(
             judge(g, &probe(g, Some(200), "<html>校园网登录</html>")),
             Some(Verdict::Hijacked)
         );
-        assert_eq!(judge(g, &probe(g, Some(200), "ok")), Some(Verdict::Hijacked));
+        assert_eq!(
+            judge(g, &probe(g, Some(200), "ok")),
+            Some(Verdict::Hijacked)
+        );
         // 重定向
         assert_eq!(judge(g, &probe(g, Some(302), "")), Some(Verdict::Hijacked));
         // 内容型探测点：匹配才在线

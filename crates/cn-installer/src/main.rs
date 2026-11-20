@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use cn_core::{net, shell};
-use steps::{Options, log_line};
+use steps::{log_line, Options};
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -133,10 +133,7 @@ fn cli(args: &[String]) -> Option<i32> {
         });
         match r {
             Ok(()) => {
-                log_line(&format!(
-                    "✓ 已解包 {n} 个文件到 {}",
-                    dir.display()
-                ));
+                log_line(&format!("✓ 已解包 {n} 个文件到 {}", dir.display()));
                 Some(0)
             }
             Err(e) => {

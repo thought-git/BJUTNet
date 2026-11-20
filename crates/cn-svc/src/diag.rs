@@ -22,7 +22,11 @@ pub fn text() -> String {
     let _ = writeln!(
         s,
         "管理员   : {}",
-        if net::is_elevated() { "是" } else { "否（普通用户）" }
+        if net::is_elevated() {
+            "是"
+        } else {
+            "否（普通用户）"
+        }
     );
     let _ = writeln!(s);
 
@@ -162,7 +166,10 @@ pub fn text() -> String {
     let _ = writeln!(s, "--- 网络判别（用户标记 > 门户指纹 > 网段兜底） ---");
     let ssid = wlan::current_ssid();
     let ipv4 = active.as_ref().and_then(|a| a.ipv4.first().cloned());
-    let gw = active.as_ref().map(|a| a.gateway.clone()).unwrap_or_default();
+    let gw = active
+        .as_ref()
+        .map(|a| a.gateway.clone())
+        .unwrap_or_default();
     let (kind, ev) = portal::detect(&cfg, ssid.as_deref(), ipv4.as_deref(), &gw, timeout);
     let _ = writeln!(s, "结果     : {}", kind.text());
     let _ = writeln!(s, "依据     : {}", ev.text());

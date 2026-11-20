@@ -87,13 +87,20 @@ fn main() {
     }
 
     println!("✓ 完成: {}", out.display());
-    println!("  模板 {} 字节 + 载荷 {} 字节 = {} 字节 ({:.2} MB)",
+    println!(
+        "  模板 {} 字节 + 载荷 {} 字节 = {} 字节 ({:.2} MB)",
         template_bytes.len(),
         payload.len(),
         exe.len(),
-        exe.len() as f64 / 1048576.0);
+        exe.len() as f64 / 1048576.0
+    );
     for f in &manifest.files {
-        println!("  {:>10}  {}{}", f.size, f.path, if f.compressed { "" } else { " (未压缩)" });
+        println!(
+            "  {:>10}  {}{}",
+            f.size,
+            f.path,
+            if f.compressed { "" } else { " (未压缩)" }
+        );
     }
     let _ = Path::new(&out);
 }

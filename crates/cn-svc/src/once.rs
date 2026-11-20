@@ -13,7 +13,11 @@ use cn_core::wlan;
 /// 读配置 + 凭据 + 活跃网卡；任一步失败打印原因并返回 None
 fn prepare() -> Option<(Config, secret::Credentials, net::Adapter)> {
     let (cfg, outcome) = Config::load_or_create(&paths::config_path());
-    println!("配置: {}（{}）", outcome.text(), paths::show(&paths::config_path()));
+    println!(
+        "配置: {}（{}）",
+        outcome.text(),
+        paths::show(&paths::config_path())
+    );
 
     let creds = match secret::load(&paths::secret_path()) {
         Ok(Some(c)) => c,
@@ -127,7 +131,9 @@ pub fn login_once() -> i32 {
             return 3;
         }
         NetworkKind::Dorm => {
-            if let Some(pc) = portal::dorm::load_config(&cfg, ipv4.as_deref().unwrap_or(""), timeout) {
+            if let Some(pc) =
+                portal::dorm::load_config(&cfg, ipv4.as_deref().unwrap_or(""), timeout)
+            {
                 println!(
                     "宿舍门户配置: login_method={} account_suffix='{}' find_mac={} en_md5={}",
                     pc.login_method, pc.account_suffix, pc.find_mac, pc.en_md5
@@ -179,7 +185,13 @@ pub fn logout() -> i32 {
     let ssid = wlan::current_ssid();
     let ipv4 = active.ipv4.first().cloned();
     let gw = active.gateway.clone();
-    let (kind, _) = portal::detect(&cfg, ssid.as_deref(), ipv4.as_deref(), &gw, cfg.probe_timeout());
+    let (kind, _) = portal::detect(
+        &cfg,
+        ssid.as_deref(),
+        ipv4.as_deref(),
+        &gw,
+        cfg.probe_timeout(),
+    );
     if kind != NetworkKind::Dorm {
         eprintln!(
             "✗ 当前判别为 {}，公共网络没有可靠的退出端点，请到门户页面手动注销",

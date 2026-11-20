@@ -126,15 +126,15 @@ fn judge(url: &str, r: http::FetchResult, tag: &str) -> LoginOutcome {
         if ret_code == 2 {
             return LoginOutcome::already(
                 url,
-                if msg.is_empty() { "ret_code=2 已在线" } else { &msg },
+                if msg.is_empty() {
+                    "ret_code=2 已在线"
+                } else {
+                    &msg
+                },
             );
         }
-        let mut o = LoginOutcome::failure(
-            url,
-            classify_msg(&msg),
-            &format!("{tag}: {msg}"),
-            &r.body,
-        );
+        let mut o =
+            LoginOutcome::failure(url, classify_msg(&msg), &format!("{tag}: {msg}"), &r.body);
         o.elapsed_ms = r.elapsed_ms;
         return o;
     }

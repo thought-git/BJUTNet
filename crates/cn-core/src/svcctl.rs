@@ -231,8 +231,11 @@ pub fn install(
         let sd = ServiceDescriptionW {
             lp_description: desc_w.as_ptr(),
         };
-        if ChangeServiceConfig2W(svc, SERVICE_CONFIG_DESCRIPTION, &sd as *const _ as *const c_void)
-            == 0
+        if ChangeServiceConfig2W(
+            svc,
+            SERVICE_CONFIG_DESCRIPTION,
+            &sd as *const _ as *const c_void,
+        ) == 0
         {
             let _ = CloseServiceHandle(svc);
             let _ = CloseServiceHandle(scm);
@@ -317,7 +320,10 @@ pub fn start(name: &str) -> Result<(), String> {
             if code != 1056 && code != 1077 {
                 let _ = CloseServiceHandle(svc);
                 let _ = CloseServiceHandle(scm);
-                return Err(format!("启动服务失败：错误码 {code}{}", describe_error(code)));
+                return Err(format!(
+                    "启动服务失败：错误码 {code}{}",
+                    describe_error(code)
+                ));
             }
         }
         let running = wait_state(svc, STATE_RUNNING, 20_000);
@@ -351,7 +357,10 @@ pub fn stop(name: &str) -> Result<(), String> {
             if code != 1062 {
                 let _ = CloseServiceHandle(svc);
                 let _ = CloseServiceHandle(scm);
-                return Err(format!("停止服务失败：错误码 {code}{}", describe_error(code)));
+                return Err(format!(
+                    "停止服务失败：错误码 {code}{}",
+                    describe_error(code)
+                ));
             }
         }
         wait_state(svc, STATE_STOPPED, 20_000);
@@ -380,7 +389,10 @@ pub fn delete(name: &str) -> Result<(), String> {
             if DeleteService(svc) == 0 {
                 let code = util::last_error();
                 if code != 1072 {
-                    result = Err(format!("删除服务失败：错误码 {code}{}", describe_error(code)));
+                    result = Err(format!(
+                        "删除服务失败：错误码 {code}{}",
+                        describe_error(code)
+                    ));
                 }
             }
             let _ = CloseServiceHandle(svc);

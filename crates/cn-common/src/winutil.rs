@@ -1,17 +1,17 @@
 //! Windows 工具：快捷方式、注册表卸载项、已知文件夹、文件夹选择对话框、消息框。
 use windows::core::{Interface, HSTRING, PWSTR};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
-    IPersistFile,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IPersistFile, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteKeyW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
     KEY_WRITE, REG_DWORD, REG_OPEN_CREATE_OPTIONS, REG_SZ,
 };
 use windows::Win32::UI::Shell::{
-    FOLDERID_Desktop, FOLDERID_Programs, IFileOpenDialog, IShellItem, IShellLinkW,
-    SHGetKnownFolderPath, SIGDN_FILESYSPATH, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS,
-    FileOpenDialog, KNOWN_FOLDER_FLAG, ShellLink,
+    FOLDERID_Desktop, FOLDERID_Programs, FileOpenDialog, IFileOpenDialog, IShellItem, IShellLinkW,
+    SHGetKnownFolderPath, ShellLink, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, KNOWN_FOLDER_FLAG,
+    SIGDN_FILESYSPATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDYES, MB_ICONQUESTION, MB_YESNO, MESSAGEBOX_STYLE,
@@ -29,7 +29,9 @@ pub fn com_init() -> Result<(), String> {
 /// 已知文件夹路径（如桌面、开始菜单 Programs）。
 pub fn known_folder(id: &windows::core::GUID) -> Option<String> {
     unsafe {
-        let path = SHGetKnownFolderPath(id as *const windows::core::GUID, KNOWN_FOLDER_FLAG(0), None).ok()?;
+        let path =
+            SHGetKnownFolderPath(id as *const windows::core::GUID, KNOWN_FOLDER_FLAG(0), None)
+                .ok()?;
         if path.is_null() {
             return None;
         }
@@ -49,11 +51,17 @@ pub fn start_menu_programs_dir() -> Option<String> {
 }
 
 /// 创建 .lnk 快捷方式。
-pub fn create_shortcut(lnk_path: &str, target: &str, args: &str, icon: &str, desc: &str) -> Result<(), String> {
+pub fn create_shortcut(
+    lnk_path: &str,
+    target: &str,
+    args: &str,
+    icon: &str,
+    desc: &str,
+) -> Result<(), String> {
     com_init()?;
     unsafe {
-        let shell_link: IShellLinkW =
-            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(|e| format!("创建 ShellLink 失败: {e}"))?;
+        let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
+            .map_err(|e| format!("创建 ShellLink 失败: {e}"))?;
         shell_link
             .SetPath(&HSTRING::from(target))
             .map_err(|e| format!("SetPath 失败: {e}"))?;
@@ -72,7 +80,9 @@ pub fn create_shortcut(lnk_path: &str, target: &str, args: &str, icon: &str, des
                 .SetDescription(&HSTRING::from(desc))
                 .map_err(|e| format!("SetDescription 失败: {e}"))?;
         }
-        let persist: IPersistFile = shell_link.cast().map_err(|e| format!("IPersistFile 失败: {e}"))?;
+        let persist: IPersistFile = shell_link
+            .cast()
+            .map_err(|e| format!("IPersistFile 失败: {e}"))?;
         persist
             .Save(&HSTRING::from(lnk_path), true)
             .map_err(|e| format!("保存快捷方式失败: {e}"))?;
